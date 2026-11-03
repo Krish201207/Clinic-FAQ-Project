@@ -1,0 +1,338 @@
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <sstream>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+
+using namespace std;
+
+// Runtime pipeline:
+// input question -> Embedding.vec sentence vector -> trained softmax classifier
+// -> if ROUTINE, cosine-search real FAQ questions -> return attached answer.
+// Uses standard C++ only. It does NOT train weights; train them separately.
+
+const string EMBEDDING_FILE = "Embeddings.vec";
+const string WEIGHTS_FILE = "classifier_weights.txt";
+const string FAQ_FILE = "FQA.txt";
+
+const int ROUTINE = 0;
+const int SENSITIVE = 1;
+const int UNSUPPORTED = 2;
+const int CLASS_COUNT = 3;
+const string LABELS[CLASS_COUNT] = {"ROUTINE", "SENSITIVE", "UNSUPPORTED"};
+
+// Must match the thresholds used/validated for your model and retrieval data.
+// Similarity is not a calibrated probability.
+const double FAQ_MIN_SIMILARITY = 0.45;
+const double FAQ_MIN_MARGIN = 0.025;
+
+struct FAQ {
+    string question;
+    string answer;
+    vector<double> vec;
+};
+
+unordered_map<string, vector<double>> wordVectors;
+int embeddingVocab = 0;
+int DIM = 0;
+
+vector<vector<double>> W;
+vector<double> bias;
+
+string lowerCopy(string s) {
+    for (char &c : s)
+        c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
+string normalize(string s) {
+    for (char &c : s) {
+        unsigned char ch = static_cast<unsigned char>(c);
+        if (!isalnum(ch) && c != '\'') c = ' ';
+        else c = static_cast<char>(tolower(ch));
+    }
+    return s;
+}
+
+vector<string> tokenize(const string &text) {
+    istringstream in(normalize(text));
+    vector<string> tokens;
+    string token;
+    while (in >> token) tokens.push_back(token);
+    return tokens;
+}
+
+bool loadEmbeddingHeader() {
+    ifstream in(EMBEDDING_FILE);
+    if (!in) {
+        cerr << "ERROR: Cannot open " << EMBEDDING_FILE << ".\n"
+             << "Put your pretrained vector file beside ClinicAssistant.exe.\n";
+        return false;
+    }
+    if (!(in >> embeddingVocab >> DIM) || embeddingVocab <= 0 || DIM <= 0) {
+        cerr << "ERROR: Invalid .vec header. Expected: vocabulary_size dimensions.\n";
+        return false;
+    }
+    return true;
+}
+
+bool loadClassifier() {
+    ifstream in(WEIGHTS_FILE);
+    if (!in) {
+        cerr << "ERROR: Cannot open " << WEIGHTS_FILE << ". Train the classifier first.\n";
+        return false;
+    }
+    int classes = 0, modelDim = 0;
+    if (!(in >> classes >> modelDim) || classes != CLASS_COUNT || modelDim != DIM) {
+        cerr << "ERROR: Classifier weight dimensions do not match Embedding.vec.\n";
+        cerr << "Expected " << CLASS_COUNT << " classes and " << DIM
+             << " dimensions, but model reports " << classes << " and " << modelDim << ".\n";
+        return false;
+    }
+
+    W.assign(CLASS_COUNT, vector<double>(DIM));
+    bias.assign(CLASS_COUNT, 0.0);
+    for (int c = 0; c < CLASS_COUNT; ++c) {
+        if (!(in >> bias[c])) {
+            cerr << "ERROR: Invalid bias in " << WEIGHTS_FILE << ".\n";
+            return false;
+        }
+        for (int j = 0; j < DIM; ++j) {
+            if (!(in >> W[c][j])) {
+                cerr << "ERROR: Incomplete weights in " << WEIGHTS_FILE << ".\n";
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool loadFaqs(vector<FAQ> &faqs) {
+    ifstream in(FAQ_FILE);
+    if (!in) {
+        cerr << "ERROR: Cannot open " << FAQ_FILE << ".\n";
+        return false;
+    }
+
+    // FQA.txt layout: question line, answer line, blank line, repeated.
+    vector<string> lines;
+    string line;
+    while (getline(in, line)) {
+        if (line.find_first_not_of(" \t\r") != string::npos)
+            lines.push_back(line);
+    }
+
+    if (lines.empty() || lines.size() % 2 != 0) {
+        cerr << "ERROR: FQA.txt must contain alternating non-empty question/answer lines.\n";
+        return false;
+    }
+
+    for (size_t i = 0; i < lines.size(); i += 2)
+        faqs.push_back({lines[i], lines[i + 1], {}});
+    return true;
+}
+
+void loadRequestedWords(const unordered_set<string> &requested) {
+    unordered_set<string> missing;
+    for (const string &w : requested)
+        if (!wordVectors.count(w)) missing.insert(w);
+    if (missing.empty()) return;
+
+    ifstream in(EMBEDDING_FILE);
+    int vocab = 0, dim = 0;
+    if (!(in >> vocab >> dim)) return;
+    string line;
+    getline(in, line); // consume the rest of header line
+
+    // Read each row as a complete line, because FastText vectors can contain
+    // punctuation tokens and each row contains one word plus DIM numbers.
+    while (!missing.empty() && getline(in, line)) {
+        istringstream row(line);
+        string word;
+        if (!(row >> word) || !missing.count(word)) continue;
+
+        vector<double> v(DIM);
+        bool ok = true;
+        for (int j = 0; j < DIM; ++j) {
+            if (!(row >> v[j])) { ok = false; break; }
+        }
+        if (ok) {
+            wordVectors.emplace(word, move(v));
+            missing.erase(word);
+        }
+    }
+}
+
+vector<double> makeSentenceVector(const string &text, int &known, int &total) {
+    vector<double> x(DIM, 0.0);
+    vector<string> words = tokenize(text);
+    known = 0;
+    total = static_cast<int>(words.size());
+
+    for (const string &word : words) {
+        auto it = wordVectors.find(word);
+        if (it == wordVectors.end()) continue;
+        for (int j = 0; j < DIM; ++j) x[j] += it->second[j];
+        ++known;
+    }
+
+    if (known > 0)
+        for (double &v : x) v /= known;
+
+    // Must match training preprocessing: L2-normalize the mean vector.
+    double norm = 0.0;
+    for (double v : x) norm += v * v;
+    norm = sqrt(norm);
+    if (norm > 1e-12)
+        for (double &v : x) v /= norm;
+
+    return x;
+}
+
+vector<double> softmax(const vector<double> &logits) {
+    double maxLogit = *max_element(logits.begin(), logits.end());
+    vector<double> p(logits.size());
+    double sum = 0.0;
+    for (size_t i = 0; i < logits.size(); ++i) {
+        p[i] = exp(logits[i] - maxLogit);
+        sum += p[i];
+    }
+    if (sum > 0.0)
+        for (double &v : p) v /= sum;
+    return p;
+}
+
+int classify(const vector<double> &x, vector<double> &probabilities) {
+    vector<double> logits(CLASS_COUNT, 0.0);
+    for (int c = 0; c < CLASS_COUNT; ++c) {
+        logits[c] = bias[c];
+        for (int j = 0; j < DIM; ++j)
+            logits[c] += W[c][j] * x[j];
+    }
+    probabilities = softmax(logits);
+    return static_cast<int>(max_element(probabilities.begin(), probabilities.end())
+                            - probabilities.begin());
+}
+
+double cosine(const vector<double> &a, const vector<double> &b) {
+    if (a.size() != b.size() || a.empty()) return 0.0;
+    double dot = 0.0, na = 0.0, nb = 0.0;
+    for (size_t i = 0; i < a.size(); ++i) {
+        dot += a[i] * b[i];
+        na += a[i] * a[i];
+        nb += b[i] * b[i];
+    }
+    if (na < 1e-15 || nb < 1e-15) return 0.0;
+    return dot / (sqrt(na) * sqrt(nb));
+}
+
+bool emergencyOverride(const string &query) {
+    // Conservative safety override; classifier mistakes must not suppress obvious emergencies.
+    const vector<string> phrases = {
+        "severe chest pain", "not breathing", "turned blue",
+        "difficulty breathing", "pregnant and bleeding",
+        "want to end my life", "kill myself", "immediate danger"
+    };
+    string text = " " + normalize(query) + " ";
+    for (const string &phrase : phrases) {
+        string needle = " " + normalize(phrase) + " ";
+        if (text.find(needle) != string::npos) return true;
+    }
+    return false;
+}
+
+int main() {
+
+    if (!loadEmbeddingHeader() || !loadClassifier()) return 1;
+
+    vector<FAQ> faqs;
+    if (!loadFaqs(faqs)) return 1;
+
+    unordered_set<string> faqWords;
+    for (const FAQ &faq : faqs)
+        for (const string &w : tokenize(faq.question)) faqWords.insert(w);
+    loadRequestedWords(faqWords);
+
+    for (FAQ &faq : faqs) {
+        int known = 0, total = 0;
+        faq.vec = makeSentenceVector(faq.question, known, total);
+    }
+
+    string query;
+    while (true) {
+        if (!getline(cin, query)) break;
+        if (lowerCopy(query) == "exit" || lowerCopy(query) == "quit") break;
+        if (tokenize(query).empty()) {
+            cout << "Assistant: Please enter a question.\n\n";
+            continue;
+        }
+
+        unordered_set<string> queryWords;
+        for (const string &w : tokenize(query)) queryWords.insert(w);
+        loadRequestedWords(queryWords);
+
+        // 1. Vectorize input.
+        int known = 0, total = 0;
+        vector<double> qVec = makeSentenceVector(query, known, total);
+        if (known == 0) {
+            cout << "Assistant: I could not vectorize this question using the available vocabulary. "
+                    "Please rephrase it or contact clinic staff.\n\n";
+            continue;
+        }
+
+        // 2. Predict category using trained W and b.
+        vector<double> probs;
+        int category = classify(qVec, probs);
+        if (emergencyOverride(query)) category = SENSITIVE;
+
+        cout << "\nClassification: " << LABELS[category] << "\n";
+        cout << fixed << setprecision(4)
+             << "Prediction score: " << probs[category] << "\n";
+
+        // 3. Route sensitive or unsupported questions before routine retrieval.
+        if (category == SENSITIVE) {
+            cout << "Assistant: This question needs human review. Please contact clinic staff.\n\n";
+            continue;
+        }
+
+        if (category == UNSUPPORTED) {
+            cout << "Assistant: This question is outside the supported FAQ. Please contact reception.\n\n";
+            continue;
+        }
+
+        // 4. Compare the query vector with every actual FAQ-question vector.
+        int bestIndex = -1;
+        double bestScore = -2.0, secondScore = -2.0;
+        for (size_t i = 0; i < faqs.size(); ++i) {
+            double score = cosine(qVec, faqs[i].vec);
+            if (score > bestScore) {
+                secondScore = bestScore;
+                bestScore = score;
+                bestIndex = static_cast<int>(i);
+            } else if (score > secondScore) {
+                secondScore = score;
+            }
+        }
+        if (secondScore < -1.0) secondScore = -1.0;
+        double margin = bestScore - secondScore;
+
+
+        // 5. Answer only when retrieval evidence is strong enough.
+        if (bestIndex >= 0 && bestScore >= FAQ_MIN_SIMILARITY &&
+            margin >= FAQ_MIN_MARGIN) {
+            cout << "\nAssistant: " << faqs[bestIndex].answer << "\n";
+            cout << "Matched question: " << faqs[bestIndex].question << "\n";
+            cout << "\n";
+        } else {
+            cout << "Assistant: No confident FAQ match found. Please contact clinic staff.\n\n";
+        }
+    }
+
+    return 0;
+}

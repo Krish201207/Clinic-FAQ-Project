@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Community Clinic FAQ Assistant</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Inter, Arial, sans-serif; background: #f3f7fc; color: #17243a; }
+    header { background: #12345a; color: white; padding: 24px 20px; }
+    .header-inner, main { max-width: 850px; margin: auto; }
+    header h1 { margin: 0 0 7px; font-size: clamp(22px, 4vw, 30px); }
+    header p { margin: 0; color: #d7e6f7; }
+    main { padding: 34px 18px 50px; }
+    .panel { background: white; border: 1px solid #e0e8f1; border-radius: 16px; padding: 24px; box-shadow: 0 8px 28px #17395b0c; }
+    label { display: block; font-weight: 700; margin-bottom: 10px; }
+    textarea { width: 100%; min-height: 120px; resize: vertical; padding: 14px; border: 1px solid #cbd7e5; border-radius: 10px; font: inherit; font-size: 16px; outline-color: #3678b9; }
+    button { margin-top: 14px; border: 0; border-radius: 10px; padding: 13px 22px; color: white; background: #1766a8; font-size: 15px; font-weight: 700; cursor: pointer; }
+    button:disabled { opacity: .6; cursor: wait; }
+    .hint { color: #64748b; font-size: 13px; margin: 10px 0 0; }
+    #result { display: none; margin-top: 22px; }
+    .result-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 15px; }
+    .tag { display: inline-block; padding: 6px 10px; border-radius: 20px; font-size: 12px; font-weight: 800; letter-spacing: .3px; background: #e8eef5; }
+    .ROUTINE { background: #e1f4e9; color: #17643a; }
+    .SENSITIVE { background: #fff0d8; color: #88520b; }
+    .UNSUPPORTED { background: #e9edf3; color: #46556b; }
+    .score { color: #64748b; font-size: 13px; }
+    .answer-label { font-size: 12px; color: #64748b; font-weight: 800; text-transform: uppercase; letter-spacing: .7px; margin: 16px 0 7px; }
+    .answer { line-height: 1.6; white-space: pre-wrap; }
+    .matched { color: #52647b; font-size: 14px; line-height: 1.5; }
+    .error { color: #a32929; background: #fff0f0; border: 1px solid #f3caca; padding: 12px; border-radius: 9px; }
+    footer { text-align: center; color: #718096; font-size: 12px; padding: 0 18px 25px; }
+    @media (max-width: 520px) { .panel { padding: 18px; } button { width: 100%; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <h1>Community Clinic FAQ Assistant</h1>
+      <p>Ask a routine question about clinic services and information.</p>
+    </div>
+  </header>
+  <main>
+    <section class="panel">
+      <form id="question-form">
+        <label for="question">How can we help you?</label>
+        <textarea id="question" maxlength="500" placeholder="For example: What are the clinic opening hours?" required></textarea>
+        <button id="submit" type="submit">Send question</button>
+        <p class="hint">This assistant provides information from the clinic FAQ only. It does not provide diagnosis or treatment advice.</p>
+      </form>
+      <section id="result" aria-live="polite"></section>
+    </section>
+  </main>
+  <footer>For medical concerns or urgent situations, contact clinic staff or local emergency services.</footer>
+  <script>
+    const form = document.getElementById('question-form');
+    const questionBox = document.getElementById('question');
+    const button = document.getElementById('submit');
+    const resultBox = document.getElementById('result');
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const question = questionBox.value.trim();
+      if (!question) return;
+      button.disabled = true;
+      button.textContent = 'Processing...';
+      resultBox.style.display = 'block';
+      resultBox.innerHTML = '<p>Checking the clinic FAQ...</p>';
+      try {
+        const response = await fetch('/ask', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Request failed.');
+
+        const safe = (value) => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+        const score = data.prediction_score == null ? '' : `Prediction score: ${(data.prediction_score * 100).toFixed(2)}%`;
+        resultBox.innerHTML = `
+          <div class="result-head"><span class="tag ${safe(data.classification)}">${safe(data.classification)}</span><span class="score">${safe(score)}</span></div>
+          ${data.matched_question ? `<div class="answer-label">Matched FAQ question</div><div class="matched">${safe(data.matched_question)}</div>` : ''}
+          <div class="answer-label">Response</div><div class="answer">${safe(data.answer || 'Please contact clinic staff.')}</div>
+        `;
+      } catch (error) {
+        resultBox.innerHTML = `<div class="error">${String(error.message).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]))}</div>`;
+      } finally {
+        button.disabled = false;
+        button.textContent = 'Send question';
+      }
+    });
+  </script>
+</body>
+</html>
