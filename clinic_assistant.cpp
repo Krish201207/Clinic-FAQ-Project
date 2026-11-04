@@ -229,7 +229,6 @@ double cosine(const vector<double> &a, const vector<double> &b) {
 
 
 int main() {
-
     if (!loadEmbeddingHeader() || !loadClassifier()) return 1;
 
     vector<FAQ> faqs;
@@ -247,11 +246,15 @@ int main() {
 
     string query;
     while (true) {
-        // cout << "You: ";
+        cout << "Question: ";
         if (!getline(cin, query)) break;
-        if (lowerCopy(query) == "exit" || lowerCopy(query) == "quit") break;
+
+        string command = lowerCopy(query);
+        if (command == "exit" || command == "quit") break;
+
         if (tokenize(query).empty()) {
-            cout << "Assistant: Please enter a question.\n\n";
+            cout << "Category: UNSUPPORTED\n";
+            cout << "Answer: Please enter a question.\n\n";
             continue;
         }
 
@@ -259,38 +262,33 @@ int main() {
         for (const string &w : tokenize(query)) queryWords.insert(w);
         loadRequestedWords(queryWords);
 
-        
         int known = 0, total = 0;
         vector<double> qVec = makeSentenceVector(query, known, total);
+
         if (known == 0) {
-            cout << "Assistant: I could not vectorize this question using the available vocabulary. "
-                    "Please rephrase it or contact clinic staff.\n\n";
+            cout << "Category: UNSUPPORTED\n";
+            cout << "Answer: I could not understand the question. Please rephrase it or contact clinic staff.\n\n";
             continue;
         }
 
-        
         vector<double> probs;
         int category = classify(qVec, probs);
-       
 
-        cout << "\nClassification: " << LABELS[category] << "\n";
-        cout << fixed << setprecision(4)
-             << "Prediction score: " << probs[category] << "\n";
+        cout << "Category: " << LABELS[category] << "\n";
 
-        
         if (category == SENSITIVE) {
-            cout << "Assistant: This question needs human review. Please contact clinic staff.\n\n";
+            cout << "Answer: This question needs human review. Please contact clinic staff.\n\n";
             continue;
         }
 
         if (category == UNSUPPORTED) {
-            cout << "Assistant: This question is outside the supported FAQ. Please contact reception.\n\n";
+            cout << "Answer: This question is outside the supported FAQ. Please contact reception.\n\n";
             continue;
         }
 
-        
         int bestIndex = -1;
         double bestScore = -2.0, secondScore = -2.0;
+
         for (size_t i = 0; i < faqs.size(); ++i) {
             double score = cosine(qVec, faqs[i].vec);
             if (score > bestScore) {
@@ -301,18 +299,15 @@ int main() {
                 secondScore = score;
             }
         }
+
         if (secondScore < -1.0) secondScore = -1.0;
         double margin = bestScore - secondScore;
 
-
-        
         if (bestIndex >= 0 && bestScore >= FAQ_MIN_SIMILARITY &&
             margin >= FAQ_MIN_MARGIN) {
-            cout << "\nAssistant: " << faqs[bestIndex].answer << "\n";
-            cout << "Matched question: " << faqs[bestIndex].question << "\n";
-            cout << "\n";
+            cout << "Answer: " << faqs[bestIndex].answer << "\n\n";
         } else {
-            cout << "Assistant: No confident FAQ match found. Please contact clinic staff.\n\n";
+            cout << "Answer: No confident FAQ match found. Please contact clinic staff.\n\n";
         }
     }
 
