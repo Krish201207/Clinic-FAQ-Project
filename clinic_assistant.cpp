@@ -247,7 +247,7 @@ int main() {
 
     string query;
     while (true) {
-        cout << "You: ";
+        // cout << "You: ";
         if (!getline(cin, query)) break;
         if (lowerCopy(query) == "exit" || lowerCopy(query) == "quit") break;
         if (tokenize(query).empty()) {
