@@ -21,16 +21,21 @@ CODE_VERSION = "rephrase-v2"  # shown by /health so you can confirm which code i
 BASE_DIR = Path(__file__).resolve().parent
 CPP_SOURCE = BASE_DIR / "clinic_assistant.cpp"
 EXECUTABLE = BASE_DIR / ("ClinicAssistant.exe" if os.name == "nt" else "ClinicAssistant")
-MODEL_NAME = os.environ.get("OPENAI_MODEL", "gpt-5.5")
+MODEL_NAME = os.environ.get("GROQ_MODEL", "openai/gpt-oss-20b")
 DIAG_TOKEN = os.environ.get("DIAG_TOKEN")  # optional; enables /diag/llm
 
 app = Flask(__name__, static_folder="static")
 
 openai_client = None
 CLIENT_INIT_ERROR = None
-if OpenAI is not None and os.environ.get("OPENAI_API_KEY"):
+if OpenAI is not None and os.environ.get("GROQ_API_KEY"):
     try:
-        openai_client = OpenAI(timeout=20.0, max_retries=1)
+        openai_client = OpenAI(
+            api_key=os.environ.get("GROQ_API_KEY"),
+            base_url="https://api.groq.com/openai/v1",
+            timeout=20.0,
+            max_retries=1
+        )
     except Exception as exc:
         CLIENT_INIT_ERROR = f"{type(exc).__name__}: {exc}"
 
@@ -140,8 +145,8 @@ def facts_preserved(original, candidate):
 def llm_unavailable_reason():
     if OpenAI is None:
         return "openai_package_missing"
-    if not os.environ.get("OPENAI_API_KEY"):
-        return "api_key_missing"
+    if not os.environ.get("GROQ_API_KEY"):
+        return "groq_api_key_missing"
     if openai_client is None:
         return "client_init_failed"
     return None
@@ -153,10 +158,15 @@ def _error_label(exc):
 
 
 def _call_llm(instructions, text):
-    response = openai_client.responses.create(
-        model=MODEL_NAME, instructions=instructions, input=text, store=False
+    response = openai_client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=[
+            {"role": "system", "content": instructions},
+            {"role": "user", "content": text}
+        ],
+        temperature=0.3
     )
-    out = (response.output_text or "").strip()
+    out = (response.choices[0].message.content or "").strip()
     if not out:
         raise RuntimeError("The model returned an empty response")
     return out
@@ -211,7 +221,7 @@ def rephrase_faq_answer(question, matched_question, original):
         try:
             draft = _call_llm(instructions, context)
         except Exception as exc:
-            app.logger.exception("OpenAI call failed (attempt %s)", attempt)
+            app.logger.exception("Groq call failed (attempt %s)", attempt)
             out.update(status="retrieval_fallback_api_error", error=_error_label(exc),
                        attempts=attempt)
             return out
@@ -306,7 +316,8 @@ def health():
         "cpp_ready": CPP_READY,
         "openai_package_installed": OpenAI is not None,
         "openai_import_error": OPENAI_IMPORT_ERROR,
-        "api_key_set": bool(os.environ.get("OPENAI_API_KEY")),
+        "api_key_set": bool(os.environ.get("GROQ_API_KEY")),
+        "provider": "groq",
         "llm_configured": openai_client is not None,
         "llm_unavailable_reason": llm_unavailable_reason(),
         "model": MODEL_NAME,
@@ -316,7 +327,7 @@ def health():
 
 @app.get("/diag/llm")
 def diag_llm():
-    """Makes one tiny real OpenAI call. Disabled unless DIAG_TOKEN is set; send it
+    """Makes one tiny real Groq call. Disabled unless DIAG_TOKEN is set; send it
     in the X-Diag-Token header."""
     supplied = request.headers.get("X-Diag-Token", "")
     if not DIAG_TOKEN or not hmac.compare_digest(supplied, DIAG_TOKEN):
