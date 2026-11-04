@@ -273,7 +273,32 @@
             : (data || "The server could not process your question.");
           addMessage(detail, "assistant", "error");
         } else {
-          addMessage(getAssistantText(data), "assistant");
+          const answerRow = addMessage(getAssistantText(data), "assistant");
+
+          // Show where the answer came from so an FAQ fallback is not mistaken
+          // for an OpenAI-generated response.
+          let sourceLabel = "";
+          if (data.ai_rephrased === true || data.response_source === "openai") {
+            sourceLabel = "AI-generated from the clinic FAQ";
+          } else if (data.response_source === "openai_weak_match") {
+            sourceLabel = "AI response based on a weak FAQ match";
+          } else if (data.response_source === "openai_safety_escalation") {
+            sourceLabel = "AI-generated safety escalation";
+          } else if (data.generation === "not_used") {
+            sourceLabel = "Fixed response · AI not used";
+          } else if (data.generation_error) {
+            sourceLabel = "FAQ fallback · AI generation failed: " + data.generation_error;
+          } else if (data.generation) {
+            sourceLabel = "FAQ fallback · " + data.generation;
+          }
+
+          if (sourceLabel) {
+            const meta = document.createElement("div");
+            meta.className = "message-meta";
+            meta.textContent = sourceLabel;
+            const content = answerRow.querySelector(".message-content");
+            content.append(meta);
+          }
         }
       } catch (error) {
         typing.remove();
