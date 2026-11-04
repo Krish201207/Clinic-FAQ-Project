@@ -63,16 +63,21 @@ def generate_grounded_answer(question, matched_question=None, retrieved_answer=N
     elif mode == "faq":
         instructions = (
             "You are the response-writing component of a community clinic FAQ assistant. "
-            "Answer using only the supplied retrieved FAQ entry. Rephrase for clarity without "
-            "changing meaning or adding facts. Do not use outside knowledge, diagnose, recommend "
-            "medicines or treatments, or invent clinic policies, timings, prices, or services. "
+            "Your task is to REWRITE the supplied FAQ answer in natural, conversational English. "
+            "Do not merely repeat or lightly copy the original wording: use a noticeably different "
+            "sentence structure and phrasing while preserving the exact meaning. "
+            "Use only the supplied retrieved FAQ entry. Preserve every factual detail, including "
+            "numbers, timings, prices, locations, eligibility rules, and conditions. Do not add, "
+            "assume, or omit facts. Do not use outside knowledge, diagnose, recommend medicines "
+            "or treatments, or invent clinic policies, timings, prices, or services. "
             "If the entry does not answer the question, say the FAQ lacks enough information and "
-            "direct the user to clinic staff. Keep the answer concise."
+            "direct the user to clinic staff. Keep the rewritten answer concise."
         )
         context = (f"User question:\n{question}\n\n"
                    f"Retrieved FAQ question:\n{matched_question or ''}\n\n"
-                   f"Retrieved FAQ answer:\n{retrieved_answer or ''}\n\n"
-                   "Rephrase the retrieved answer without adding information.")
+                   f"Retrieved FAQ answer (source text; do not copy verbatim):\n{retrieved_answer or ''}\n\n"
+                   "Rewrite this answer with meaningfully different wording and sentence structure. "
+                   "Preserve all facts exactly; do not add or remove information.")
     else:
         instructions = (
             "You are the response-writing component of a community clinic FAQ assistant. "
@@ -221,6 +226,7 @@ def ask():
                             "Please contact clinic staff for confirmation.")
             generation_status = "weak_match_escalation_fallback"
 
+    ai_rephrased = generation_status == "rag"
     return jsonify({
         "classification": category,
         "prediction_score": score,
@@ -228,7 +234,9 @@ def ask():
         "matched_question": matched_question,
         "retrieved_answer": retrieved_answer or None,
         "answer": final_answer,
-        "generation": generation_status
+        "generation": generation_status,
+        "ai_rephrased": ai_rephrased,
+        "response_source": "openai" if ai_rephrased else "faq_fallback_or_escalation"
     })
 
 
