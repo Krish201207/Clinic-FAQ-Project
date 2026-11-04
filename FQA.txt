@@ -340,6 +340,69 @@ When Doctor says so
 When should i take my medicine?
 Take the medicine as adviced by the doctor
 
+What are your timings?
+Mon-Fri 8:00 AM-6:00 PM, Sat 9:00 AM-1:00 PM. Closed Sundays and public holidays.
+
+Where are you located?
+12 Market Road, next to the Community Hall, opposite the main bus stand.
+
+How can I contact you?
+Call 0181-555-0142 or email info@greenfieldclinic.example.
+
+Is parking available?
+Yes, free parking is behind the building.
+
+Is the clinic accessible?
+Yes, there is a ramp, wide doors, and an accessible restroom.
+
+Do I need an appointment?
+Walk-ins are welcome, but appointments are seen first.
+
+How do I book?
+By phone, at reception, or through the online form.
+
+Can I cancel or reschedule?
+Yes, at least 4 hours before your appointment.
+
+What if I’m late?
+After 15 minutes, you may be rescheduled or seen later.
+
+What is the consultation fee?
+Rs. 100, free with a valid community health card.
+
+How can I pay?
+Cash, UPI, or debit/credit card.
+
+Are there any discounts?
+Yes, for community health card holders, seniors above 65, and children under 5.
+
+What services do you offer?
+Consultations, immunization, antenatal care, basic lab tests, screening, wound dressing, and counselling.
+
+Do you have a pharmacy?
+Yes, a small dispensary with subsidized medicines.
+
+How long do reports take?
+Same day for basic tests, 2-3 working days for others.
+
+What should I bring?
+Photo ID, patient ID or token, previous reports, and your medicine list.
+
+Which languages do staff speak?
+English, Hindi, and Punjabi.
+
+Do you offer home visits?
+No.
+
+Can you give medical advice here?
+No. Please book a consultation with a clinician.
+
+What if it’s an emergency?
+Call 112 or go to the nearest hospital.
+
+Can you share another patient’s information?
+No, patient information is confidential.
+
 
 
 
