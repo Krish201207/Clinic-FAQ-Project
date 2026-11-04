@@ -217,8 +217,6 @@ Basic in-clinic tests are ready the same day. Tests sent to the partner lab take
 Can you tell me my report result on the phone?
 Sorry, results aren’t given over the phone. Please collect your report from reception with your patient ID or token slip.
 
-Getting there and facilities
-
 How do I find you?
 We’re at 12 Market Road, next to the Community Hall, opposite the main bus stand.
 
@@ -248,7 +246,6 @@ Sorry, home visits aren’t provided. Outreach camps are sometimes held, and dat
 
 Any free check-up camps coming up?
 We hold a free health screening camp on the first Saturday of every month. Details are on the notice board and at reception.
-
 
 Can you recommend a good dentist?
 I don’t have verified information about dental services. Staff can advise you.
