@@ -228,7 +228,9 @@ double cosine(const vector<double> &a, const vector<double> &b) {
 
 
 
-int main() {
+int main(int argc, char *argv[]) {
+    const bool machineMode = argc > 1 && string(argv[1]) == "--machine";
+
     if (!loadEmbeddingHeader() || !loadClassifier()) return 1;
 
     vector<FAQ> faqs;
@@ -246,15 +248,20 @@ int main() {
 
     string query;
     while (true) {
-        cout << "Question: ";
+        if (!machineMode) cout << "Question: ";
         if (!getline(cin, query)) break;
 
         string command = lowerCopy(query);
         if (command == "exit" || command == "quit") break;
 
         if (tokenize(query).empty()) {
-            cout << "Category: UNSUPPORTED\n";
-            cout << "Answer: Please enter a question.\n\n";
+            if (machineMode) {
+                cout << "Classification: UNSUPPORTED\n";
+                cout << "Assistant: Please enter a question.\n";
+            } else {
+                cout << "Category: UNSUPPORTED\n";
+                cout << "Answer: Please enter a question.\n\n";
+            }
             continue;
         }
 
@@ -266,23 +273,42 @@ int main() {
         vector<double> qVec = makeSentenceVector(query, known, total);
 
         if (known == 0) {
-            cout << "Category: UNSUPPORTED\n";
-            cout << "Answer: I could not understand the question. Please rephrase it or contact clinic staff.\n\n";
+            if (machineMode) {
+                cout << "Classification: UNSUPPORTED\n";
+                cout << "Assistant: I could not understand the question. Please rephrase it or contact clinic staff.\n";
+            } else {
+                cout << "Category: UNSUPPORTED\n";
+                cout << "Answer: I could not understand the question. Please rephrase it or contact clinic staff.\n\n";
+            }
             continue;
         }
 
         vector<double> probs;
         int category = classify(qVec, probs);
 
-        cout << "Category: " << LABELS[category] << "\n";
+        if (!machineMode) cout << "Category: " << LABELS[category] << "\n";
+        else {
+            cout << "Classification: " << LABELS[category] << "\n";
+            cout << fixed << setprecision(4)
+                 << "Prediction score: " << probs[category] << "\n";
+        }
 
         if (category == SENSITIVE) {
-            cout << "Answer: This question needs human review. Please contact clinic staff.\n\n";
+            if (machineMode) {
+                cout << "Safety flag: SENSITIVE\n";
+                cout << "Assistant: This question needs human review. Please contact clinic staff.\n";
+            } else {
+                cout << "Answer: This question needs human review. Please contact clinic staff.\n\n";
+            }
             continue;
         }
 
         if (category == UNSUPPORTED) {
-            cout << "Answer: This question is outside the supported FAQ. Please contact reception.\n\n";
+            if (machineMode) {
+                cout << "Assistant: This question is outside the supported FAQ. Please contact reception.\n";
+            } else {
+                cout << "Answer: This question is outside the supported FAQ. Please contact reception.\n\n";
+            }
             continue;
         }
 
@@ -302,12 +328,30 @@ int main() {
 
         if (secondScore < -1.0) secondScore = -1.0;
         double margin = bestScore - secondScore;
+        bool strongMatch = bestIndex >= 0 &&
+                           bestScore >= FAQ_MIN_SIMILARITY &&
+                           margin >= FAQ_MIN_MARGIN;
 
-        if (bestIndex >= 0 && bestScore >= FAQ_MIN_SIMILARITY &&
-            margin >= FAQ_MIN_MARGIN) {
-            cout << "Answer: " << faqs[bestIndex].answer << "\n\n";
+        if (machineMode) {
+            cout << fixed << setprecision(4)
+                 << "Top similarity: " << bestScore << "\n"
+                 << "Top-two margin: " << margin << "\n";
+            if (bestIndex >= 0) {
+                cout << "Matched question: " << faqs[bestIndex].question << "\n";
+                cout << "Retrieved answer: " << faqs[bestIndex].answer << "\n";
+            } else {
+                cout << "Matched question: \n";
+                cout << "Retrieved answer: \n";
+            }
+            cout << "Retrieval status: " << (strongMatch ? "STRONG" : "WEAK") << "\n";
+            if (strongMatch) cout << "Assistant: " << faqs[bestIndex].answer << "\n";
+            else cout << "Assistant: No confident FAQ match found. Please contact clinic staff.\n";
         } else {
-            cout << "Answer: No confident FAQ match found. Please contact clinic staff.\n\n";
+            if (strongMatch) {
+                cout << "Answer: " << faqs[bestIndex].answer << "\n\n";
+            } else {
+                cout << "Answer: No confident FAQ match found. Please contact clinic staff.\n\n";
+            }
         }
     }
 
