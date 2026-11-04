@@ -12,10 +12,6 @@
 
 using namespace std;
 
-// Runtime pipeline:
-// input question -> Embedding.vec sentence vector -> trained softmax classifier
-// -> if ROUTINE, cosine-search real FAQ questions -> return attached answer.
-// Uses standard C++ only. It does NOT train weights; train them separately.
 
 const string EMBEDDING_FILE = "Embeddings.vec";
 const string WEIGHTS_FILE = "classifier_weights.txt";
@@ -27,8 +23,6 @@ const int UNSUPPORTED = 2;
 const int CLASS_COUNT = 3;
 const string LABELS[CLASS_COUNT] = {"ROUTINE", "SENSITIVE", "UNSUPPORTED"};
 
-// Must match the thresholds used/validated for your model and retrieval data.
-// Similarity is not a calibrated probability.
 const double FAQ_MIN_SIMILARITY = 0.45;
 const double FAQ_MIN_MARGIN = 0.025;
 
@@ -46,16 +40,18 @@ vector<vector<double>> W;
 vector<double> bias;
 
 string lowerCopy(string s) {
-    for (char &c : s)
-        c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+    for (char &c : s) {
+        c = tolower(c);
+    }
     return s;
 }
 
 string normalize(string s) {
     for (char &c : s) {
-        unsigned char ch = static_cast<unsigned char>(c);
-        if (!isalnum(ch) && c != '\'') c = ' ';
-        else c = static_cast<char>(tolower(ch));
+        if (!isalnum(c) && c != '\'')
+            c = ' ';
+        else
+            c = tolower(c);
     }
     return s;
 }
@@ -120,7 +116,7 @@ bool loadFaqs(vector<FAQ> &faqs) {
         return false;
     }
 
-    // FQA.txt layout: question line, answer line, blank line, repeated.
+
     vector<string> lines;
     string line;
     while (getline(in, line)) {
@@ -148,10 +144,8 @@ void loadRequestedWords(const unordered_set<string> &requested) {
     int vocab = 0, dim = 0;
     if (!(in >> vocab >> dim)) return;
     string line;
-    getline(in, line); // consume the rest of header line
+    getline(in, line); 
 
-    // Read each row as a complete line, because FastText vectors can contain
-    // punctuation tokens and each row contains one word plus DIM numbers.
     while (!missing.empty() && getline(in, line)) {
         istringstream row(line);
         string word;
@@ -185,7 +179,6 @@ vector<double> makeSentenceVector(const string &text, int &known, int &total) {
     if (known > 0)
         for (double &v : x) v /= known;
 
-    // Must match training preprocessing: L2-normalize the mean vector.
     double norm = 0.0;
     for (double v : x) norm += v * v;
     norm = sqrt(norm);
@@ -232,20 +225,8 @@ double cosine(const vector<double> &a, const vector<double> &b) {
     return dot / (sqrt(na) * sqrt(nb));
 }
 
-bool emergencyOverride(const string &query) {
-    // Conservative safety override; classifier mistakes must not suppress obvious emergencies.
-    const vector<string> phrases = {
-        "severe chest pain", "not breathing", "turned blue",
-        "difficulty breathing", "pregnant and bleeding",
-        "want to end my life", "kill myself", "immediate danger"
-    };
-    string text = " " + normalize(query) + " ";
-    for (const string &phrase : phrases) {
-        string needle = " " + normalize(phrase) + " ";
-        if (text.find(needle) != string::npos) return true;
-    }
-    return false;
-}
+
+
 
 int main() {
 
@@ -266,6 +247,7 @@ int main() {
 
     string query;
     while (true) {
+        cout << "You: ";
         if (!getline(cin, query)) break;
         if (lowerCopy(query) == "exit" || lowerCopy(query) == "quit") break;
         if (tokenize(query).empty()) {
@@ -277,7 +259,7 @@ int main() {
         for (const string &w : tokenize(query)) queryWords.insert(w);
         loadRequestedWords(queryWords);
 
-        // 1. Vectorize input.
+        
         int known = 0, total = 0;
         vector<double> qVec = makeSentenceVector(query, known, total);
         if (known == 0) {
@@ -286,16 +268,16 @@ int main() {
             continue;
         }
 
-        // 2. Predict category using trained W and b.
+        
         vector<double> probs;
         int category = classify(qVec, probs);
-        if (emergencyOverride(query)) category = SENSITIVE;
+       
 
         cout << "\nClassification: " << LABELS[category] << "\n";
         cout << fixed << setprecision(4)
              << "Prediction score: " << probs[category] << "\n";
 
-        // 3. Route sensitive or unsupported questions before routine retrieval.
+        
         if (category == SENSITIVE) {
             cout << "Assistant: This question needs human review. Please contact clinic staff.\n\n";
             continue;
@@ -306,7 +288,7 @@ int main() {
             continue;
         }
 
-        // 4. Compare the query vector with every actual FAQ-question vector.
+        
         int bestIndex = -1;
         double bestScore = -2.0, secondScore = -2.0;
         for (size_t i = 0; i < faqs.size(); ++i) {
@@ -323,7 +305,7 @@ int main() {
         double margin = bestScore - secondScore;
 
 
-        // 5. Answer only when retrieval evidence is strong enough.
+        
         if (bestIndex >= 0 && bestScore >= FAQ_MIN_SIMILARITY &&
             margin >= FAQ_MIN_MARGIN) {
             cout << "\nAssistant: " << faqs[bestIndex].answer << "\n";
