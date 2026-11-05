@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Conversation History | Community Clinic</title>
+  <style>
+    :root {
+      --navy: #17365d;
+      --blue: #2563eb;
+      --page: #f3f6fb;
+      --border: #e3e9f2;
+      --text: #172033;
+      --muted: #64748b;
+      --assistant: #ffffff;
+      --user: #e7f0ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--page);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      background: var(--navy);
+      color: white;
+      padding: 22px 20px;
+      text-align: center;
+      box-shadow: 0 2px 10px rgba(15, 35, 65, .12);
+    }
+    header h1 { margin: 0; font-size: clamp(1.25rem, 3vw, 1.65rem); }
+    header p { margin: 7px 0 0; color: #dbeafe; font-size: .94rem; }
+    main {
+      width: min(850px, calc(100% - 28px));
+      margin: 26px auto 18px;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    .tabs { display:flex; gap:8px; margin-bottom:14px; border-bottom:1px solid var(--border); }
+    .tab-button { background:transparent; color:var(--muted); border-radius:10px 10px 0 0; border-bottom:3px solid transparent; min-height:42px; padding:0 18px; }
+    .tab-button.active { color:var(--navy); border-bottom-color:var(--blue); background:white; }
+    .tab-panel[hidden] { display:none !important; }
+    .history-shell { background:white; border:1px solid var(--border); border-radius:18px; padding:20px; min-height:510px; }
+    .history-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; }
+    .history-heading h2 { margin:0; font-size:1.1rem; color:var(--navy); }
+    .history-item { border:1px solid var(--border); border-radius:13px; padding:14px; margin-bottom:12px; }
+    .history-time { color:var(--muted); font-size:.75rem; margin-bottom:9px; }
+    .history-topline { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+    .classification-badge { display:inline-flex; align-items:center; border-radius:999px; padding:4px 9px; font-size:.7rem; font-weight:800; letter-spacing:.03em; background:#e8efff; color:#1e40af; }
+    .classification-badge.sensitive { background:#fff1f2; color:#be123c; }
+    .classification-badge.unsupported { background:#fff7ed; color:#c2410c; }
+    .history-label { color:var(--navy); font-size:.78rem; font-weight:700; margin:8px 0 3px; }
+    .history-text { white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.5; }
+    .empty-history { color:var(--muted); text-align:center; padding:65px 15px; }
+    .small-button { background:#eef2f7; color:#334155; min-height:38px; padding:0 12px; }
+    .chat-shell {
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      box-shadow: 0 12px 35px rgba(31, 55, 90, .07);
+      display: flex;
+      flex-direction: column;
+      min-height: 510px;
+      overflow: hidden;
+    }
+    .chat-top {
+      padding: 15px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 11px;
+    }
+    .avatar {
+      width: 38px; height: 38px; border-radius: 50%;
+      display: grid; place-items: center;
+      background: #e8efff; color: var(--navy); font-weight: 800;
+    }
+    .chat-top strong { display: block; font-size: .96rem; }
+    .chat-top small { color: var(--muted); }
+    .status-dot {
+      width: 8px; height: 8px; display: inline-block;
+      border-radius: 50%; background: #22c55e; margin-right: 5px;
+    }
+    #messages {
+      flex: 1;
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+      overflow-y: auto;
+      min-height: 320px;
+    }
+    .message-row { display: flex; width: 100%; }
+    .message-row.user { justify-content: flex-end; }
+    .bubble {
+      max-width: min(78%, 620px);
+      padding: 12px 15px;
+      border-radius: 16px;
+      line-height: 1.5;
+      font-size: .96rem;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .assistant .bubble {
+      background: var(--assistant);
+      border: 1px solid var(--border);
+      border-top-left-radius: 5px;
+    }
+    .user .bubble {
+      background: var(--user);
+      border: 1px solid #d4e4ff;
+      border-top-right-radius: 5px;
+    }
+    .message-meta { font-size: .72rem; color: var(--muted); margin: 0 5px 5px; }
+    .message-content { display: flex; flex-direction: column; }
+    .user .message-content { align-items: flex-end; }
+    .assistant .message-content { align-items: flex-start; }
+    .typing {
+      display: inline-flex; align-items: center; gap: 5px;
+      min-width: 58px;
+    }
+    .typing span {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: #8190a5; animation: bounce 1s infinite ease-in-out;
+    }
+    .typing span:nth-child(2) { animation-delay: .15s; }
+    .typing span:nth-child(3) { animation-delay: .3s; }
+    @keyframes bounce {
+      0%, 60%, 100% { transform: translateY(0); opacity: .55; }
+      30% { transform: translateY(-4px); opacity: 1; }
+    }
+    .composer {
+      border-top: 1px solid var(--border);
+      padding: 15px;
+      background: #fbfcfe;
+    }
+    .composer-inner {
+      display: flex; align-items: flex-end; gap: 10px;
+      max-width: 100%;
+    }
+    textarea {
+      flex: 1; resize: none; min-height: 48px; max-height: 140px;
+      border: 1px solid #cbd5e1; border-radius: 13px;
+      padding: 13px 14px; font: inherit; line-height: 1.4;
+      outline: none; background: white; color: var(--text);
+    }
+    textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(37, 99, 235, .11); }
+    button {
+      border: 0; border-radius: 12px; background: var(--blue); color: white;
+      min-height: 48px; padding: 0 19px; font: inherit; font-weight: 650;
+      cursor: pointer; transition: background .15s, opacity .15s;
+    }
+    button:hover { background: #1d4ed8; }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+    .hint { margin: 8px 3px 0; color: var(--muted); font-size: .75rem; }
+    .disclaimer {
+      text-align: center; color: var(--muted); font-size: .78rem;
+      line-height: 1.5; padding: 14px 8px 20px;
+    }
+    .error { color: #991b1b; background: #fef2f2; border-color: #fecaca !important; }
+    @media (max-width: 600px) {
+      main { width: calc(100% - 16px); margin-top: 12px; }
+      .chat-shell, .history-shell { min-height: 65vh; border-radius: 14px; }
+      .history-shell { padding: 13px; }
+      #messages { padding: 15px 12px; }
+      .bubble { max-width: 90%; }
+      .composer { padding: 11px; }
+      button { padding: 0 14px; }
+      header { padding: 18px 12px; }
+    }
+
+    .tab-button { display:inline-flex; align-items:center; text-decoration:none; }
+    .tab-button.active { color:var(--navy); border-bottom-color:var(--blue); background:white; }
+    .history-shell { box-shadow:0 12px 35px rgba(31,55,90,.07); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Community Clinic FAQ Assistant</h1>
+    <p>Review your previous questions and answers.</p>
+  </header>
+  <main>
+    <nav class="tabs" aria-label="Main navigation">
+      <a class="tab-button" href="/">Chat</a>
+      <a class="tab-button active" href="/history" aria-current="page">History</a>
+    </nav>
+    <section class="history-shell" aria-label="Previous conversations">
+      <div class="history-heading">
+        <h2>Previous conversations</h2>
+        <button class="small-button" id="refresh-history" type="button">Refresh</button>
+        <button class="small-button" id="clear-history" type="button">Clear history</button>
+      </div>
+      <div id="history-list"><div class="empty-history">Loading saved conversations...</div></div>
+    </section>
+    <div class="disclaimer">This assistant provides information from the clinic FAQ only. It does not provide diagnosis or treatment advice. For medical concerns or urgent situations, contact clinic staff or local emergency services.</div>
+  </main>
+  <script>
+    function getSessionId() {
+      let id = localStorage.getItem("clinic_chat_session_id");
+      if (!id) {
+        id = crypto.randomUUID();
+        localStorage.setItem("clinic_chat_session_id", id);
+      }
+      return id;
+    }
+    const sessionId = getSessionId();
+    const historyList = document.getElementById("history-list");
+    const refreshButton = document.getElementById("refresh-history");
+    const clearButton = document.getElementById("clear-history");
+
+    async function loadHistory() {
+      historyList.textContent = "Loading history...";
+      try {
+        const response = await fetch(`/api/history?session_id=${encodeURIComponent(sessionId)}`, { cache: "no-store" });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Could not load history.");
+        historyList.replaceChildren();
+        if (!data.history || data.history.length === 0) {
+          const empty = document.createElement("div");
+          empty.className = "empty-history";
+          empty.textContent = "No saved conversations yet. Ask a question on the Chat page first.";
+          historyList.append(empty);
+          return;
+        }
+        for (const item of data.history) {
+          const card = document.createElement("article");
+          card.className = "history-item";
+          const topLine = document.createElement("div");
+          topLine.className = "history-topline";
+          const time = document.createElement("div");
+          time.className = "history-time";
+          const date = new Date(item.created_at);
+          time.textContent = Number.isNaN(date.getTime()) ? item.created_at : date.toLocaleString();
+          const category = document.createElement("span");
+          const value = String(item.classification || "UNKNOWN").toUpperCase();
+          category.className = "classification-badge" + (value === "SENSITIVE" ? " sensitive" : value === "UNSUPPORTED" ? " unsupported" : "");
+          category.textContent = "CLASSIFIED: " + value;
+          topLine.append(time, category);
+          const qLabel = document.createElement("div");
+          qLabel.className = "history-label";
+          qLabel.textContent = "YOU ASKED";
+          const question = document.createElement("div");
+          question.className = "history-text";
+          question.textContent = item.question;
+          const aLabel = document.createElement("div");
+          aLabel.className = "history-label";
+          aLabel.textContent = "CLINIC ASSISTANT";
+          const answer = document.createElement("div");
+          answer.className = "history-text";
+          answer.textContent = item.answer;
+          card.append(topLine, qLabel, question, aLabel, answer);
+          historyList.append(card);
+        }
+      } catch (error) {
+        historyList.textContent = error.message;
+      }
+    }
+
+    refreshButton.addEventListener("click", loadHistory);
+    clearButton.addEventListener("click", async () => {
+      if (!confirm("Delete all saved conversations for this browser?")) return;
+      clearButton.disabled = true;
+      try {
+        const response = await fetch("/api/history", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: sessionId })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Could not clear history.");
+        await loadHistory();
+      } catch (error) {
+        alert(error.message);
+      } finally {
+        clearButton.disabled = false;
+      }
+    });
+    loadHistory();
+  </script>
+</body>
+</html>
