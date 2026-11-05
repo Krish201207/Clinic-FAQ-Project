@@ -18,7 +18,7 @@ BASE_DIR = Path(__file__).resolve().parent
 CPP_SOURCE = BASE_DIR / "clinic_assistant.cpp"
 FAQ_FILE = BASE_DIR / "FQA.txt"
 EXECUTABLE = BASE_DIR / ("ClinicAssistant.exe" if os.name == "nt" else "ClinicAssistant")
-MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
 API_KEY = os.getenv("GEMINI_API_KEY")
 
 app = Flask(__name__, static_folder="static")
