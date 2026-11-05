@@ -1,6 +1,8 @@
 import os
 import re
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
@@ -24,6 +26,16 @@ API_KEY = os.getenv("GEMINI_API_KEY")
 app = Flask(__name__, static_folder="static")
 client = genai.Client(api_key=API_KEY) if genai and API_KEY else None
 
+# Explicit FAQ cache. It is created lazily once per application process and
+# reused until it expires. If Google's API plan/model does not allow explicit
+# caching, the app safely falls back to ordinary generation.
+CACHE_TTL_SECONDS = int(os.getenv("GEMINI_CACHE_TTL_SECONDS", "3600"))
+_cache_lock = threading.Lock()
+_cache_name = None
+_cache_expires_at = 0.0
+_cache_creation_failed = False
+_cache_error = None
+
 
 def build_cpp():
     if not CPP_SOURCE.exists():
@@ -41,6 +53,51 @@ try:
     CPP_READY, BUILD_ERROR = True, None
 except Exception as exc:
     CPP_READY, BUILD_ERROR = False, str(exc)
+
+
+def _get_or_create_faq_cache(faq_content, prompt):
+    """Create the FAQ cache once, then reuse it until its TTL expires."""
+    global _cache_name, _cache_expires_at, _cache_creation_failed, _cache_error
+
+    now = time.monotonic()
+    if _cache_name and now < _cache_expires_at:
+        return _cache_name
+
+    # Do not repeatedly retry a cache creation that this API key/model cannot use.
+    if _cache_creation_failed:
+        return None
+
+    with _cache_lock:
+        now = time.monotonic()
+        if _cache_name and now < _cache_expires_at:
+            return _cache_name
+        if _cache_creation_failed:
+            return None
+
+        try:
+            cache = client.caches.create(
+                model=MODEL,
+                config=types.CreateCachedContentConfig(
+                    display_name="community-clinic-faq",
+                    system_instruction=prompt,
+                    contents=faq_content,
+                    ttl=f"{CACHE_TTL_SECONDS}s"
+                )
+            )
+            _cache_name = cache.name
+            # Refresh a little before the provider-side expiry.
+            _cache_expires_at = time.monotonic() + max(60, CACHE_TTL_SECONDS - 60)
+            _cache_error = None
+            app.logger.info("Gemini FAQ cache created and ready.")
+            return _cache_name
+        except Exception as exc:
+            _cache_creation_failed = True
+            _cache_error = f"{type(exc).__name__}: {exc}"
+            app.logger.warning(
+                "Explicit Gemini caching is unavailable; using normal requests: %s",
+                _cache_error
+            )
+            return None
 
 
 def generate_answer(question):
@@ -66,21 +123,38 @@ def generate_answer(question):
         "Return only the answer."
     )
 
-    context = (
-        f"CLINIC FAQ (use only for clinic-specific facts):\n"
-        f"{faq_content if faq_content else '[FAQ file unavailable]'}\n\n"
-        f"USER QUESTION:\n{question}"
-    )
+    faq_context = faq_content if faq_content else "[FAQ file unavailable]"
+    cache_name = _get_or_create_faq_cache(faq_context, prompt)
 
-    response = client.models.generate_content(
-        model=MODEL,
-        contents=context,
-        config=types.GenerateContentConfig(
-            system_instruction=prompt,
-            temperature=0.3,
-            max_output_tokens=350
+    if cache_name:
+        # Only the new question is sent as request content after cache creation.
+        response = client.models.generate_content(
+            model=MODEL,
+            contents=question,
+            config=types.GenerateContentConfig(
+                cached_content=cache_name,
+                temperature=0.3,
+                max_output_tokens=350
+            )
         )
-    )
+    else:
+        # Fallback keeps the chatbot working if explicit caching is unavailable
+        # (for example, because the API project is on a tier without cache access).
+        context = (
+            f"CLINIC FAQ (use only for clinic-specific facts):\\n"
+            f"{faq_context}\\n\\n"
+            f"USER QUESTION:\\n{question}"
+        )
+        response = client.models.generate_content(
+            model=MODEL,
+            contents=context,
+            config=types.GenerateContentConfig(
+                system_instruction=prompt,
+                temperature=0.3,
+                max_output_tokens=350
+            )
+        )
+
     answer = (response.text or "").strip()
     if not answer:
         raise RuntimeError("Gemini returned an empty answer")
@@ -125,7 +199,7 @@ def home():
 def health():
     return jsonify({
         "ok": CPP_READY,
-        "code_version": "gemini-general-answer-v1",
+        "code_version": "gemini-explicit-cache-v1",
         "deployed_commit": os.getenv("RENDER_GIT_COMMIT"),
         "cpp_ready": CPP_READY,
         "faq_file_ready": FAQ_FILE.exists(),
@@ -135,6 +209,10 @@ def health():
         "provider": "google-gemini",
         "llm_configured": client is not None,
         "model": MODEL,
+        "explicit_cache_enabled": bool(_cache_name and time.monotonic() < _cache_expires_at),
+        "explicit_cache_attempted": bool(_cache_name or _cache_creation_failed),
+        "explicit_cache_error": _cache_error,
+        "cache_ttl_seconds": CACHE_TTL_SECONDS,
         "error": BUILD_ERROR
     })
 
