@@ -5,22 +5,45 @@ from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
 
+import threading
+import time
+
 try:
-    from groq import Groq
-    GROQ_IMPORT_ERROR = None
+    from google import genai
+    from google.genai import types
+    GEMINI_IMPORT_ERROR = None
 except Exception as exc:
-    Groq = None
-    GROQ_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
+    genai = None
+    types = None
+    GEMINI_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
 
 BASE_DIR = Path(__file__).resolve().parent
 CPP_SOURCE = BASE_DIR / "clinic_assistant.cpp"
 FAQ_FILE = BASE_DIR / "FQA.txt"
 EXECUTABLE = BASE_DIR / ("ClinicAssistant.exe" if os.name == "nt" else "ClinicAssistant")
-MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
-API_KEY = os.getenv("GROQ_API_KEY")
+MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
+API_KEY = os.getenv("GEMINI_API_KEY")
+CACHE_TTL_SECONDS = max(600, int(os.getenv("GEMINI_CACHE_TTL_SECONDS", "3600")))
 
 app = Flask(__name__, static_folder="static")
-client = Groq(api_key=API_KEY) if Groq and API_KEY else None
+client = genai.Client(api_key=API_KEY) if genai and API_KEY else None
+
+FAQ_SYSTEM_INSTRUCTION = (
+    "You are a community clinic FAQ assistant. The complete clinic FAQ is "
+    "provided in your cached context. Answer patient questions using only "
+    "that information. Understand paraphrases and different wording; do not "
+    "require the patient to use the FAQ's exact wording. Give a concise, "
+    "natural answer and preserve all facts, numbers, times, prices and "
+    "conditions. Do not invent or assume details. If the FAQ does not contain "
+    "the answer, say that the information is unavailable and direct the "
+    "patient to clinic reception. Never diagnose, prescribe, or recommend "
+    "treatment. Return only the answer."
+)
+
+_faq_cache = None
+_faq_cache_created_at = 0.0
+_faq_cache_lock = threading.Lock()
+_faq_cache_error = None
 
 
 def build_cpp():
@@ -41,44 +64,67 @@ except Exception as exc:
     CPP_READY, BUILD_ERROR = False, str(exc)
 
 
-def ask_groq(system_prompt, user_prompt):
+def get_faq_cache():
+    global _faq_cache, _faq_cache_created_at, _faq_cache_error
+
     if client is None:
-        raise RuntimeError("Groq client is not configured")
-    result = client.chat.completions.create(
-        model=MODEL,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ],
-        temperature=0.3,
-        max_tokens=300
-    )
-    answer = (result.choices[0].message.content or "").strip()
-    if not answer:
-        raise RuntimeError("Groq returned an empty answer")
-    return answer
+        raise RuntimeError("Gemini client is not configured")
+    if not FAQ_FILE.exists():
+        raise RuntimeError("FQA.txt is missing")
+
+    # Create the remote cache once per running server process and reuse it.
+    with _faq_cache_lock:
+        still_valid = (
+            _faq_cache is not None
+            and time.monotonic() - _faq_cache_created_at < CACHE_TTL_SECONDS - 60
+        )
+        if still_valid:
+            return _faq_cache
+
+        faq_content = FAQ_FILE.read_text(encoding="utf-8").strip()
+        if not faq_content:
+            raise RuntimeError("FQA.txt is empty")
+
+        try:
+            cached = client.caches.create(
+                model=MODEL,
+                config=types.CreateCachedContentConfig(
+                    contents=[
+                        types.Content(
+                            role="user",
+                            parts=[types.Part.from_text(text=faq_content)]
+                        )
+                    ],
+                    system_instruction=FAQ_SYSTEM_INSTRUCTION,
+                    ttl=f"{CACHE_TTL_SECONDS}s",
+                    display_name="community-clinic-faq"
+                )
+            )
+            _faq_cache = cached
+            _faq_cache_created_at = time.monotonic()
+            _faq_cache_error = None
+            app.logger.info("Created Gemini FAQ context cache: %s", cached.name)
+            return _faq_cache
+        except Exception as exc:
+            _faq_cache_error = f"{type(exc).__name__}: {exc}"
+            raise RuntimeError(f"Could not create Gemini FAQ cache: {_faq_cache_error}") from exc
 
 
 def generate_faq_answer(question):
-    if not FAQ_FILE.exists():
-        raise RuntimeError("FQA.txt is missing")
-    faq_content = FAQ_FILE.read_text(encoding="utf-8")
-
-    prompt = (
-        "You are a clinic FAQ assistant. Find the single most relevant answer "
-        "in the supplied FAQ and answer the patient's question using only that "
-        "information. Briefly rephrase it in simple, natural English so it is "
-        "not copied word for word. Preserve all facts, numbers, times, prices "
-        "and conditions. Do not combine unrelated FAQ entries or add information. "
-        "If the FAQ does not contain the answer, say so and direct the patient "
-        "to clinic reception. Do not diagnose or give treatment advice. "
-        "Return only the answer."
+    cache = get_faq_cache()
+    result = client.models.generate_content(
+        model=MODEL,
+        contents=question,
+        config=types.GenerateContentConfig(
+            cached_content=cache.name,
+            temperature=0.2,
+            max_output_tokens=250
+        )
     )
-    context = (
-        f"Complete clinic FAQ:\n{faq_content}\n\n"
-        f"Patient question: {question}"
-    )
-    return ask_groq(prompt, context)
+    answer = (result.text or "").strip()
+    if not answer:
+        raise RuntimeError("Gemini returned an empty answer")
+    return answer
 
 
 def run_faq_engine(question):
@@ -119,19 +165,21 @@ def home():
 def health():
     return jsonify({
         "ok": CPP_READY,
-        "code_version": "groq-full-faq-v1",
+        "code_version": "gemini-cached-faq-v1",
         "deployed_commit": os.getenv("RENDER_GIT_COMMIT"),
         "cpp_ready": CPP_READY,
         "faq_file_ready": FAQ_FILE.exists(),
-        "groq_package_installed": Groq is not None,
-        "groq_import_error": GROQ_IMPORT_ERROR,
+        "gemini_package_installed": genai is not None,
+        "gemini_import_error": GEMINI_IMPORT_ERROR,
         "api_key_set": bool(API_KEY),
-        "provider": "groq",
+        "provider": "google-gemini",
         "llm_configured": client is not None,
         "model": MODEL,
+        "faq_cache_created": _faq_cache is not None,
+        "faq_cache_error": _faq_cache_error,
+        "cache_ttl_seconds": CACHE_TTL_SECONDS,
         "error": BUILD_ERROR
     })
-
 
 @app.post("/ask")
 def ask():
@@ -176,30 +224,23 @@ def ask():
             "ai_rephrased": False, "response_source": "fixed_safety_message"
         })
 
-    matched, retrieved = data["matched"], data["answer"]
     try:
-        # The complete FQA.txt is sent with every routine question.
+        # The FAQ is cached remotely once per server process. Each request sends
+        # only the patient's question to Gemini.
         answer = generate_faq_answer(question)
-        generation, source, error = "full_faq_context", "groq", None
+        generation, source, error = "cached_faq_generation", "gemini", None
     except Exception as exc:
-        app.logger.exception("Groq answer generation failed")
-        if retrieved:
-            answer, generation, source = retrieved, "retrieval_fallback", "faq_original"
-        else:
-            answer = ("I couldn't generate an answer. Please contact clinic staff "
-                      "for confirmation.")
-            generation, source = "generation_failed", "fixed_escalation"
-        error = str(exc)
+        app.logger.exception("Gemini answer generation failed")
+        answer = ("I can't access the clinic FAQ right now. Please contact "
+                  "clinic reception for assistance.")
+        generation, source, error = "generation_failed", "fixed_escalation", str(exc)
 
     return jsonify({
         "classification": category,
         "prediction_score": score,
-        "top_two_margin": float(data["margin"]) if data["margin"] else None,
-        "matched_question": matched,
-        "retrieved_answer": retrieved,
         "answer": answer,
         "generation": generation,
-        "ai_rephrased": generation == "full_faq_context",
+        "ai_rephrased": generation == "cached_faq_generation",
         "response_source": source,
         "generation_error": error
     })
