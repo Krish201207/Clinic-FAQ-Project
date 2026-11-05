@@ -1,6 +1,8 @@
 import os
 import re
 import subprocess
+import sqlite3
+import uuid
 import threading
 import time
 from pathlib import Path
@@ -36,6 +38,43 @@ _cache_expires_at = 0.0
 _cache_creation_failed = False
 _cache_error = None
 
+
+
+# Persistent conversation history. On Render, set CHAT_DB_PATH to a mounted disk path.
+CHAT_DB_PATH = Path(os.getenv("CHAT_DB_PATH", str(BASE_DIR / "clinic_history.db")))
+
+def get_db_connection():
+    CHAT_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    db = sqlite3.connect(str(CHAT_DB_PATH), timeout=15)
+    db.row_factory = sqlite3.Row
+    return db
+
+def valid_session_id(value):
+    try:
+        return str(uuid.UUID(str(value)))
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+def init_history_db():
+    with get_db_connection() as db:
+        db.execute("""CREATE TABLE IF NOT EXISTS chat_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            question TEXT NOT NULL,
+            answer TEXT NOT NULL,
+            classification TEXT,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+        )""")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_history_session ON chat_history(session_id, id DESC)")
+
+def save_chat_turn(session_id, question, answer, classification):
+    with get_db_connection() as db:
+        db.execute(
+            "INSERT INTO chat_history (session_id, question, answer, classification) VALUES (?, ?, ?, ?)",
+            (session_id, question, answer, classification)
+        )
+
+init_history_db()
 
 def build_cpp():
     if not CPP_SOURCE.exists():
@@ -251,11 +290,35 @@ def home():
     return send_from_directory(BASE_DIR / "static", "index.html")
 
 
+
+@app.get("/history")
+def get_history():
+    sid = valid_session_id(request.args.get("session_id"))
+    if not sid:
+        return jsonify({"error": "A valid session ID is required."}), 400
+    with get_db_connection() as db:
+        rows = db.execute(
+            "SELECT id, question, answer, classification, created_at FROM chat_history WHERE session_id=? ORDER BY id DESC LIMIT 500",
+            (sid,)
+        ).fetchall()
+    return jsonify({"history": [dict(row) for row in rows]})
+
+@app.delete("/history")
+def clear_history():
+    sid = valid_session_id((request.get_json(silent=True) or {}).get("session_id"))
+    if not sid:
+        return jsonify({"error": "A valid session ID is required."}), 400
+    with get_db_connection() as db:
+        db.execute("DELETE FROM chat_history WHERE session_id=?", (sid,))
+    return jsonify({"success": True})
+
 @app.get("/health")
 def health():
     return jsonify({
         "ok": CPP_READY,
-        "code_version": "gemini-clinic-only-v1",
+        "code_version": "gemini-clinic-history-v1",
+        "history_storage": "sqlite",
+        "history_database_path": str(CHAT_DB_PATH),
         "deployed_commit": os.getenv("RENDER_GIT_COMMIT"),
         "cpp_ready": CPP_READY,
         "faq_file_ready": FAQ_FILE.exists(),
@@ -277,7 +340,11 @@ def ask():
     if not CPP_READY:
         return jsonify({"error": "C++ engine is not ready: " + str(BUILD_ERROR)}), 500
 
-    question = str((request.get_json(silent=True) or {}).get("question", "")).strip()
+    payload = request.get_json(silent=True) or {}
+    question = str(payload.get("question", "")).strip()
+    session_id = valid_session_id(payload.get("session_id"))
+    if not session_id:
+        return jsonify({"error": "A valid session ID is required."}), 400
     if not question:
         return jsonify({"error": "Please enter a question."}), 400
     if len(question) > 500:
@@ -301,10 +368,11 @@ def ask():
         else:
             answer = ("This question needs human review. Please contact clinic staff "
                       "or a qualified clinician. I cannot provide diagnosis or treatment advice.")
+        save_chat_turn(session_id, question, answer, category)
         return jsonify({
             "classification": category, "prediction_score": score,
             "answer": answer, "generation": "fixed_safety_message",
-            "ai_rephrased": False, "response_source": "fixed_safety_message"
+            "ai_rephrased": False, "response_source": "fixed_safety_message", "saved": True
         })
 
     try:
@@ -320,6 +388,7 @@ def ask():
                   "later or contact clinic reception for clinic-related questions.")
         generation, source, error = "generation_failed", "fixed_escalation", str(exc)
 
+    save_chat_turn(session_id, question, answer, category)
     return jsonify({
         "classification": category,
         "prediction_score": score,
@@ -327,7 +396,7 @@ def ask():
         "generation": generation,
         "ai_rephrased": False,
         "response_source": source,
-        "generation_error": error
+        "generation_error": error, "saved": True
     })
 
 
