@@ -23,7 +23,7 @@ const int UNSUPPORTED = 2;
 const int CLASS_COUNT = 3;
 const string LABELS[CLASS_COUNT] = {"ROUTINE", "SENSITIVE", "UNSUPPORTED"};
 
-const double FAQ_MIN_SIMILARITY = 0.45;
+const double FAQ_MIN_SIMILARITY = 0.25;
 const double FAQ_MIN_MARGIN = 0.025;
 
 struct FAQ {
