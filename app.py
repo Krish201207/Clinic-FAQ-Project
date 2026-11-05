@@ -1,4 +1,5 @@
 import os
+import re
 import sqlite3
 import uuid
 import threading
@@ -131,13 +132,14 @@ def _get_or_create_faq_cache(faq_content, prompt):
 def _generate_with_cache_or_fallback(question, faq_context, system_instruction, max_output_tokens=120):
     """Generate using the cached FAQ when available, otherwise send FAQ inline."""
     stable_cached_instruction = (
-        "You are a strict assistant for this specific community clinic. "
-        "Only handle questions directly about this clinic's services and operations. "
-        "Do not answer unrelated topics such as food, recipes, nutrition, coding, "
-        "schoolwork, games, or general knowledge. Use the clinic FAQ as the only "
-        "source for clinic-specific facts; never invent clinic details. Do not give "
-        "diagnosis, treatment, or medication advice. Follow task instructions only "
-        "when they do not conflict with this clinic-only role."
+        "You are the assistant for a specific community clinic. You may respond "
+        "naturally to basic social remarks such as greetings, thanks, and goodbyes, "
+        "and answer brief questions about your identity, capabilities, and the AI "
+        "model powering you. For all substantive questions, only handle this clinic's "
+        "services and operations. Do not answer unrelated topics such as food, recipes, "
+        "coding, schoolwork, or games. Use the clinic FAQ as the only source for "
+        "clinic-specific facts; never invent clinic details. Do not give diagnosis, "
+        "treatment, or medication advice."
     )
     cache_name = _get_or_create_faq_cache(faq_context, stable_cached_instruction)
 
@@ -168,26 +170,25 @@ def _generate_with_cache_or_fallback(question, faq_context, system_instruction, 
 def check_clinic_scope(question, faq_context):
     """Fail-closed topic gate: only direct questions about this clinic pass."""
     gate_instruction = """
-You are a strict topic classifier for a community clinic FAQ chatbot.
-Decide whether the user's request is DIRECTLY about this specific clinic.
+You are the topic classifier for a community clinic FAQ assistant.
 
-IN_SCOPE: this clinic's opening hours, address, contact details, directions,
-appointments, doctors or staff, departments, services, facilities, fees,
-payments, registration, reports, documents, policies, or procedures; or
-clarification of information stated in this clinic's FAQ.
+Return IN_SCOPE for:
+- Questions about this clinic's hours, address, contacts, appointments, staff,
+  departments, services, facilities, fees, payments, registration, reports,
+  documents, policies, or procedures.
+- Clarifying questions about information in this clinic's FAQ.
+- Basic social conversation: greetings, how-are-you remarks, thanks, and goodbyes.
+- Brief questions about this assistant's identity, capabilities, or the AI model
+  powering it.
 
-OUT_OF_SCOPE: food, recipes, restaurants, general nutrition or diet questions,
-general health or medical advice, coding, schoolwork, technology, games,
-entertainment, news, politics, personal advice, casual conversation, jokes,
-stories, or questions about another clinic/hospital.
+Return OUT_OF_SCOPE for substantive unrelated requests such as coding, schoolwork,
+games, entertainment, recipes, restaurants, general knowledge, news, politics,
+and personal advice. General medical advice, diagnosis, treatment, and medication
+questions are not allowed and must be handled by the application's safety rules.
 
-Mentioning the word "clinic", "doctor", "health", or "medicine" does not by
-itself make a request in-scope. General medical advice, diagnosis, treatment,
-and medication questions are out-of-scope here; the application's separate
-safety handling may escalate detected sensitive questions.
-
-Use the FAQ only to understand what this clinic is. Do not answer the user.
-Return exactly one token: IN_SCOPE or OUT_OF_SCOPE. No punctuation or explanation.
+A greeting such as "Hello" is allowed; do not reject it merely because it is not
+about clinic operations. Do not answer the user. Return exactly one token:
+IN_SCOPE or OUT_OF_SCOPE.
 """.strip()
 
     task = (
@@ -202,9 +203,59 @@ Return exactly one token: IN_SCOPE or OUT_OF_SCOPE. No punctuation or explanatio
     return result.strip().upper() == "IN_SCOPE"
 
 
+def basic_conversation_answer(question):
+    """Handle greetings and simple assistant identity questions without topic-gating them."""
+    q = re.sub(r"[^a-z0-9\s]", " ", question.lower())
+    q = re.sub(r"\s+", " ", q).strip()
+
+    greetings = {
+        "hi", "hello", "hey", "good morning", "good afternoon",
+        "good evening", "how are you", "how are you doing",
+        "whats up", "what is up", "howdy"
+    }
+    thanks = {"thanks", "thank you", "thx", "thanks a lot"}
+    farewells = {"bye", "goodbye", "see you", "see you later"}
+    capability_questions = {
+        "what can you do", "how can you help", "what do you do",
+        "what are your capabilities"
+    }
+    identity_questions = {
+        "who are you", "what are you", "what model are you",
+        "which model are you", "what ai model are you",
+        "which ai model are you", "what model do you run on",
+        "which model do you run on", "what ai do you use",
+        "which ai do you use", "what powers you"
+    }
+
+    if q in greetings:
+        return ("Hello! I'm the Community Clinic Assistant. I can help with "
+                "clinic services, appointments, staff, facilities, fees, hours, "
+                "and policies. What would you like to know?")
+    if q in thanks:
+        return "You're welcome! Let me know if you have another clinic-related question."
+    if q in farewells:
+        return "Goodbye! Feel free to return if you need information about the clinic."
+    if q in capability_questions:
+        return ("I can answer questions about this clinic's services, appointments, "
+                "staff, facilities, fees, opening hours, and policies using its FAQ. "
+                "I can also handle basic greetings, thanks, and questions about my role.")
+    if q in identity_questions:
+        return (f"I'm the Community Clinic Assistant, powered by Google's Gemini AI "
+                f"model ({MODEL}). I use a Python-based classifier to categorize "
+                "questions and Gemini to generate answers. I'm an information assistant, "
+                "not a doctor, and I don't provide diagnosis or treatment advice.")
+    return None
+
+
 def generate_answer(question):
     if client is None:
         raise RuntimeError("Gemini client is not configured")
+
+    # Handle greetings and assistant identity directly. These are allowed
+    # conversational exceptions, not general-purpose knowledge requests.
+    basic_answer = basic_conversation_answer(question)
+    if basic_answer:
+        return basic_answer, "basic_conversation"
 
     faq_content = FAQ_FILE.read_text(encoding="utf-8").strip() if FAQ_FILE.exists() else ""
     faq_context = faq_content if faq_content else "[FAQ file unavailable]"
@@ -217,16 +268,18 @@ def generate_answer(question):
         ), "out_of_scope"
 
     answer_instruction = """
-You are the FAQ assistant for this specific community clinic. Answer ONLY
-questions directly related to this clinic's services and operations.
+You are the assistant for this specific community clinic. You may answer basic
+social remarks and brief questions about your identity, capabilities, or the AI
+model powering you. For substantive questions, answer ONLY questions related
+to this clinic's services and operations.
 
 Use the supplied clinic FAQ as the source of truth for clinic-specific facts.
 Never invent opening hours, prices, staff names, services, policies, contact
 details, or other clinic information. If the FAQ does not contain the answer,
 say that the FAQ does not specify it and direct the user to clinic reception.
 
-Do not answer unrelated questions about food, recipes, nutrition, restaurants,
-coding, schoolwork, games, entertainment, general knowledge, or other topics.
+Do not answer substantive unrelated questions about food, recipes, nutrition,
+restaurants, coding, schoolwork, games, entertainment, or general knowledge.
 Do not provide diagnosis, treatment recommendations, or medication instructions.
 Medical concerns must be handled by a qualified clinician. For an emergency,
 advise calling 112 in India or going to the nearest emergency department.
@@ -323,6 +376,21 @@ def ask():
         return jsonify({"error": "Please enter a question."}), 400
     if len(question) > 500:
         return jsonify({"error": "Please keep the question under 500 characters."}), 400
+
+    # Allow basic conversation before the trained classifier can label a greeting
+    # as unsupported or sensitive. These harmless exchanges are recorded as ROUTINE.
+    basic_answer = basic_conversation_answer(question)
+    if basic_answer:
+        save_chat_turn(session_id, question, basic_answer, "ROUTINE")
+        return jsonify({
+            "classification": "ROUTINE",
+            "prediction_score": None,
+            "answer": basic_answer,
+            "generation": "basic_conversation",
+            "ai_rephrased": False,
+            "response_source": "built_in_conversation_handler",
+            "saved": True
+        })
 
     try:
         data = run_faq_engine(question)
