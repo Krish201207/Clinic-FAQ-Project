@@ -12,25 +12,19 @@
 
 using namespace std;
 
+// Runtime pipeline:
+// input question -> Embedding.vec sentence vector -> trained softmax classifier
+// -> if ROUTINE, cosine-search real FAQ questions -> return attached answer.
+// Uses standard C++ only. It does NOT train weights; train them separately.
 
 const string EMBEDDING_FILE = "Embeddings.vec";
 const string WEIGHTS_FILE = "classifier_weights.txt";
-const string FAQ_FILE = "FQA.txt";
 
 const int ROUTINE = 0;
 const int SENSITIVE = 1;
 const int UNSUPPORTED = 2;
 const int CLASS_COUNT = 3;
 const string LABELS[CLASS_COUNT] = {"ROUTINE", "SENSITIVE", "UNSUPPORTED"};
-
-const double FAQ_MIN_SIMILARITY = 0.05;
-const double FAQ_MIN_MARGIN = 0.025;
-
-struct FAQ {
-    string question;
-    string answer;
-    vector<double> vec;
-};
 
 unordered_map<string, vector<double>> wordVectors;
 int embeddingVocab = 0;
@@ -40,18 +34,16 @@ vector<vector<double>> W;
 vector<double> bias;
 
 string lowerCopy(string s) {
-    for (char &c : s) {
-        c = tolower(c);
-    }
+    for (char &c : s)
+        c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
     return s;
 }
 
 string normalize(string s) {
     for (char &c : s) {
-        if (!isalnum(c) && c != '\'')
-            c = ' ';
-        else
-            c = tolower(c);
+        unsigned char ch = static_cast<unsigned char>(c);
+        if (!isalnum(ch) && c != '\'') c = ' ';
+        else c = static_cast<char>(tolower(ch));
     }
     return s;
 }
@@ -75,6 +67,7 @@ bool loadEmbeddingHeader() {
         cerr << "ERROR: Invalid .vec header. Expected: vocabulary_size dimensions.\n";
         return false;
     }
+    cout << "Embedding dimensions: " << DIM << "\n";
     return true;
 }
 
@@ -106,31 +99,7 @@ bool loadClassifier() {
             }
         }
     }
-    return true;
-}
-
-bool loadFaqs(vector<FAQ> &faqs) {
-    ifstream in(FAQ_FILE);
-    if (!in) {
-        cerr << "ERROR: Cannot open " << FAQ_FILE << ".\n";
-        return false;
-    }
-
-
-    vector<string> lines;
-    string line;
-    while (getline(in, line)) {
-        if (line.find_first_not_of(" \t\r") != string::npos)
-            lines.push_back(line);
-    }
-
-    if (lines.empty() || lines.size() % 2 != 0) {
-        cerr << "ERROR: FQA.txt must contain alternating non-empty question/answer lines.\n";
-        return false;
-    }
-
-    for (size_t i = 0; i < lines.size(); i += 2)
-        faqs.push_back({lines[i], lines[i + 1], {}});
+    cout << "Loaded trained classifier weights.\n";
     return true;
 }
 
@@ -144,8 +113,10 @@ void loadRequestedWords(const unordered_set<string> &requested) {
     int vocab = 0, dim = 0;
     if (!(in >> vocab >> dim)) return;
     string line;
-    getline(in, line); 
+    getline(in, line); // consume the rest of header line
 
+    // Read each row as a complete line, because FastText vectors can contain
+    // punctuation tokens and each row contains one word plus DIM numbers.
     while (!missing.empty() && getline(in, line)) {
         istringstream row(line);
         string word;
@@ -179,6 +150,7 @@ vector<double> makeSentenceVector(const string &text, int &known, int &total) {
     if (known > 0)
         for (double &v : x) v /= known;
 
+    // Must match training preprocessing: L2-normalize the mean vector.
     double norm = 0.0;
     for (double v : x) norm += v * v;
     norm = sqrt(norm);
@@ -213,55 +185,37 @@ int classify(const vector<double> &x, vector<double> &probabilities) {
                             - probabilities.begin());
 }
 
-double cosine(const vector<double> &a, const vector<double> &b) {
-    if (a.size() != b.size() || a.empty()) return 0.0;
-    double dot = 0.0, na = 0.0, nb = 0.0;
-    for (size_t i = 0; i < a.size(); ++i) {
-        dot += a[i] * b[i];
-        na += a[i] * a[i];
-        nb += b[i] * b[i];
+bool emergencyOverride(const string &query) {
+    // Conservative safety override; classifier mistakes must not suppress obvious emergencies.
+    const vector<string> phrases = {
+        "severe chest pain", "not breathing", "turned blue",
+        "difficulty breathing", "pregnant and bleeding",
+        "want to end my life", "kill myself", "immediate danger"
+    };
+    string text = " " + normalize(query) + " ";
+    for (const string &phrase : phrases) {
+        string needle = " " + normalize(phrase) + " ";
+        if (text.find(needle) != string::npos) return true;
     }
-    if (na < 1e-15 || nb < 1e-15) return 0.0;
-    return dot / (sqrt(na) * sqrt(nb));
+    return false;
 }
 
-
-
-
-int main(int argc, char *argv[]) {
-    const bool machineMode = argc > 1 && string(argv[1]) == "--machine";
+int main() {
+    cout << "=== Community Clinic FAQ Assistant ===\n";
+    cout << "Pipeline: question -> vector -> trained classification -> routine questions sent to Flask/Gemini FAQ context\n\n";
 
     if (!loadEmbeddingHeader() || !loadClassifier()) return 1;
 
-    vector<FAQ> faqs;
-    if (!loadFaqs(faqs)) return 1;
-
-    unordered_set<string> faqWords;
-    for (const FAQ &faq : faqs)
-        for (const string &w : tokenize(faq.question)) faqWords.insert(w);
-    loadRequestedWords(faqWords);
-
-    for (FAQ &faq : faqs) {
-        int known = 0, total = 0;
-        faq.vec = makeSentenceVector(faq.question, known, total);
-    }
+    cout << "FAQ retrieval is handled by the Python/Gemini backend.\\n";
+    cout << "Type 'exit' to quit.\\n\\n";
 
     string query;
     while (true) {
-        if (!machineMode) cout << "Question: ";
+        cout << "You: ";
         if (!getline(cin, query)) break;
-
-        string command = lowerCopy(query);
-        if (command == "exit" || command == "quit") break;
-
+        if (lowerCopy(query) == "exit" || lowerCopy(query) == "quit") break;
         if (tokenize(query).empty()) {
-            if (machineMode) {
-                cout << "Classification: UNSUPPORTED\n";
-                cout << "Assistant: Please enter a question.\n";
-            } else {
-                cout << "Category: UNSUPPORTED\n";
-                cout << "Answer: Please enter a question.\n\n";
-            }
+            cout << "Assistant: Please enter a question.\n\n";
             continue;
         }
 
@@ -269,91 +223,56 @@ int main(int argc, char *argv[]) {
         for (const string &w : tokenize(query)) queryWords.insert(w);
         loadRequestedWords(queryWords);
 
+        // 1. Vectorize input.
         int known = 0, total = 0;
         vector<double> qVec = makeSentenceVector(query, known, total);
-
+        cout << "\nVector coverage: " << known << "/" << total << " words.\n";
         if (known == 0) {
-            if (machineMode) {
-                cout << "Classification: UNSUPPORTED\n";
-                cout << "Assistant: I could not understand the question. Please rephrase it or contact clinic staff.\n";
-            } else {
-                cout << "Category: UNSUPPORTED\n";
-                cout << "Answer: I could not understand the question. Please rephrase it or contact clinic staff.\n\n";
-            }
+            cout << "Assistant: I could not vectorize this question using the available vocabulary. "
+                    "Please rephrase it or contact clinic staff.\n\n";
             continue;
         }
 
+        // 2. Predict category using trained W and b.
         vector<double> probs;
         int category = classify(qVec, probs);
+        if (emergencyOverride(query)) category = SENSITIVE;
 
-        if (!machineMode) cout << "Category: " << LABELS[category] << "\n";
-        else {
-            cout << "Classification: " << LABELS[category] << "\n";
-            cout << fixed << setprecision(4)
-                 << "Prediction score: " << probs[category] << "\n";
-        }
+        cout << "Classification: " << LABELS[category] << "\n";
+        cout << fixed << setprecision(4)
+             << "Class scores: ROUTINE=" << probs[ROUTINE]
+             << ", SENSITIVE=" << probs[SENSITIVE]
+             << ", UNSUPPORTED=" << probs[UNSUPPORTED] << "\n";
 
+        // 3. Route sensitive or unsupported questions before routine retrieval.
         if (category == SENSITIVE) {
-            if (machineMode) {
-                cout << "Safety flag: SENSITIVE\n";
-                cout << "Assistant: This question needs human review. Please contact clinic staff.\n";
-            } else {
-                cout << "Answer: This question needs human review. Please contact clinic staff.\n\n";
-            }
+            cout << "Safety flag: " << (emergencyOverride(query) ? "EMERGENCY" : "SENSITIVE") << "\n";
+            cout << "Assistant: This question needs human review by clinic staff or a clinician.\n";
+            if (emergencyOverride(query))
+                cout << "If this is happening now, call 112 in India or go to the nearest emergency department.\n";
+            else
+                cout << "Please contact reception or request a private staff follow-up.\n";
+            cout << "No routine FAQ answer was automatically issued.\n\n";
             continue;
         }
 
         if (category == UNSUPPORTED) {
-            if (machineMode) {
-                cout << "Assistant: This question is outside the supported FAQ. Please contact reception.\n";
-            } else {
-                cout << "Answer: This question is outside the supported FAQ. Please contact reception.\n\n";
-            }
+            cout << "Assistant: I can only answer questions supported by this clinic's FAQ. "
+                    "Please contact reception for this request.\n\n";
             continue;
         }
 
-        int bestIndex = -1;
-        double bestScore = -2.0, secondScore = -2.0;
-
-        for (size_t i = 0; i < faqs.size(); ++i) {
-            double score = cosine(qVec, faqs[i].vec);
-            if (score > bestScore) {
-                secondScore = bestScore;
-                bestScore = score;
-                bestIndex = static_cast<int>(i);
-            } else if (score > secondScore) {
-                secondScore = score;
-            }
-        }
-
-        if (secondScore < -1.0) secondScore = -1.0;
-        double margin = bestScore - secondScore;
-        bool strongMatch = bestIndex >= 0 &&
-                           bestScore >= FAQ_MIN_SIMILARITY &&
-                           margin >= FAQ_MIN_MARGIN;
-
-        if (machineMode) {
-            cout << fixed << setprecision(4)
-                 << "Top similarity: " << bestScore << "\n"
-                 << "Top-two margin: " << margin << "\n";
-            if (bestIndex >= 0) {
-                cout << "Matched question: " << faqs[bestIndex].question << "\n";
-                cout << "Retrieved answer: " << faqs[bestIndex].answer << "\n";
-            } else {
-                cout << "Matched question: \n";
-                cout << "Retrieved answer: \n";
-            }
-            cout << "Retrieval status: " << (strongMatch ? "STRONG" : "WEAK") << "\n";
-            if (strongMatch) cout << "Assistant: " << faqs[bestIndex].answer << "\n";
-            else cout << "Assistant: No confident FAQ match found. Please contact clinic staff.\n";
-        } else {
-            if (strongMatch) {
-                cout << "Answer: " << faqs[bestIndex].answer << "\n\n";
-            } else {
-                cout << "Answer: No confident FAQ match found. Please contact clinic staff.\n\n";
-            }
-        }
+        // ROUTINE questions are passed to Flask, which supplies FAQ context
+        // to Gemini. C++ no longer performs cosine similarity or FAQ matching.
+        double topProbability = *max_element(probs.begin(), probs.end());
+        cout << "Prediction score: " << topProbability << "\\n";
+        cout << "Top-two margin: 0\\n";
+        cout << "Matched question: \\n";
+        cout << "Retrieved answer: \\n";
+        cout << "Retrieval status: WEAK\\n";
+        cout << "Assistant: Routine question forwarded to the generative FAQ backend.\\n\\n";
     }
 
+    cout << "Assistant closed.\n";
     return 0;
 }
