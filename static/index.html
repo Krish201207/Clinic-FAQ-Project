@@ -42,6 +42,20 @@
       flex-direction: column;
       min-height: 0;
     }
+
+    .tabs { display:flex; gap:8px; margin-bottom:14px; border-bottom:1px solid var(--border); }
+    .tab-button { background:transparent; color:var(--muted); border-radius:10px 10px 0 0; border-bottom:3px solid transparent; min-height:42px; padding:0 18px; }
+    .tab-button.active { color:var(--navy); border-bottom-color:var(--blue); background:white; }
+    .tab-panel[hidden] { display:none !important; }
+    .history-shell { background:white; border:1px solid var(--border); border-radius:18px; padding:20px; min-height:510px; }
+    .history-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; }
+    .history-heading h2 { margin:0; font-size:1.1rem; color:var(--navy); }
+    .history-item { border:1px solid var(--border); border-radius:13px; padding:14px; margin-bottom:12px; }
+    .history-time { color:var(--muted); font-size:.75rem; margin-bottom:9px; }
+    .history-label { color:var(--navy); font-size:.78rem; font-weight:700; margin:8px 0 3px; }
+    .history-text { white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.5; }
+    .empty-history { color:var(--muted); text-align:center; padding:65px 15px; }
+    .small-button { background:#eef2f7; color:#334155; min-height:38px; padding:0 12px; }
     .chat-shell {
       background: white;
       border: 1px solid var(--border);
@@ -149,7 +163,8 @@
     .error { color: #991b1b; background: #fef2f2; border-color: #fecaca !important; }
     @media (max-width: 600px) {
       main { width: calc(100% - 16px); margin-top: 12px; }
-      .chat-shell { min-height: 65vh; border-radius: 14px; }
+      .chat-shell, .history-shell { min-height: 65vh; border-radius: 14px; }
+      .history-shell { padding: 13px; }
       #messages { padding: 15px 12px; }
       .bubble { max-width: 90%; }
       .composer { padding: 11px; }
@@ -165,7 +180,12 @@
   </header>
 
   <main>
-    <section class="chat-shell" aria-label="Clinic FAQ chat">
+
+    <nav class="tabs" aria-label="Main navigation">
+      <button class="tab-button active" id="chat-tab" type="button">Chat</button>
+      <button class="tab-button" id="history-tab" type="button">History</button>
+    </nav>
+    <section class="tab-panel chat-shell" id="chat-panel" aria-label="Clinic FAQ chat">
       <div class="chat-top">
         <div class="avatar" aria-hidden="true">C</div>
         <div>
@@ -192,6 +212,14 @@
       </form>
     </section>
 
+
+    <section class="tab-panel history-shell" id="history-panel" hidden>
+      <div class="history-heading">
+        <h2>Previous conversations</h2>
+        <button class="small-button" id="clear-history" type="button">Clear history</button>
+      </div>
+      <div id="history-list"><div class="empty-history">Your saved questions and answers will appear here.</div></div>
+    </section>
     <div class="disclaimer">
       This assistant provides information from the clinic FAQ only. It does not provide diagnosis or treatment advice.
       For medical concerns or urgent situations, contact clinic staff or local emergency services.
@@ -203,6 +231,95 @@
     const input = document.getElementById("question");
     const sendButton = document.getElementById("send-button");
     const messages = document.getElementById("messages");
+
+
+    const chatTab = document.getElementById("chat-tab");
+    const historyTab = document.getElementById("history-tab");
+    const chatPanel = document.getElementById("chat-panel");
+    const historyPanel = document.getElementById("history-panel");
+    const historyList = document.getElementById("history-list");
+    const clearHistoryButton = document.getElementById("clear-history");
+
+    function getSessionId() {
+      let id = localStorage.getItem("clinic_chat_session_id");
+      if (!id) {
+        id = crypto.randomUUID();
+        localStorage.setItem("clinic_chat_session_id", id);
+      }
+      return id;
+    }
+    const sessionId = getSessionId();
+
+    function switchTab(tab) {
+      const showHistory = tab === "history";
+      chatPanel.hidden = showHistory;
+      historyPanel.hidden = !showHistory;
+      chatTab.classList.toggle("active", !showHistory);
+      historyTab.classList.toggle("active", showHistory);
+      if (showHistory) loadHistory();
+    }
+    chatTab.addEventListener("click", () => switchTab("chat"));
+    historyTab.addEventListener("click", () => switchTab("history"));
+
+    async function loadHistory() {
+      historyList.textContent = "Loading history...";
+      try {
+        const response = await fetch(`/history?session_id=${encodeURIComponent(sessionId)}`);
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Could not load history.");
+        historyList.replaceChildren();
+        if (!data.history.length) {
+          const empty = document.createElement("div");
+          empty.className = "empty-history";
+          empty.textContent = "No saved conversations yet.";
+          historyList.append(empty);
+          return;
+        }
+        for (const item of data.history) {
+          const card = document.createElement("article");
+          card.className = "history-item";
+          const time = document.createElement("div");
+          time.className = "history-time";
+          const date = new Date(item.created_at);
+          time.textContent = Number.isNaN(date.getTime()) ? item.created_at : date.toLocaleString();
+          const qLabel = document.createElement("div");
+          qLabel.className = "history-label";
+          qLabel.textContent = "YOU ASKED";
+          const q = document.createElement("div");
+          q.className = "history-text";
+          q.textContent = item.question;
+          const aLabel = document.createElement("div");
+          aLabel.className = "history-label";
+          aLabel.textContent = "CLINIC ASSISTANT";
+          const a = document.createElement("div");
+          a.className = "history-text";
+          a.textContent = item.answer;
+          card.append(time, qLabel, q, aLabel, a);
+          historyList.append(card);
+        }
+      } catch (error) {
+        historyList.textContent = error.message;
+      }
+    }
+
+    clearHistoryButton.addEventListener("click", async () => {
+      if (!confirm("Delete all saved conversations for this browser?")) return;
+      clearHistoryButton.disabled = true;
+      try {
+        const response = await fetch("/history", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: sessionId })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Could not clear history.");
+        await loadHistory();
+      } catch (error) {
+        alert(error.message);
+      } finally {
+        clearHistoryButton.disabled = false;
+      }
+    });
 
     function addMessage(text, sender, extraClass = "") {
       const row = document.createElement("div");
@@ -236,7 +353,6 @@
     }
 
     function getAssistantText(data) {
-      // Supports the JSON field names used by the Flask backend.
       if (typeof data === "string") return data;
       return data.answer || data.response || data.message ||
         data.assistant || data.output ||
@@ -257,7 +373,7 @@
         const response = await fetch("/ask", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question })
+          body: JSON.stringify({ question, session_id: sessionId })
         });
 
         let data;
