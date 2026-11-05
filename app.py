@@ -291,7 +291,12 @@ def home():
 
 
 
+
 @app.get("/history")
+def history_page():
+    return send_from_directory(BASE_DIR / "static", "history.html")
+
+@app.get("/api/history")
 def get_history():
     sid = valid_session_id(request.args.get("session_id"))
     if not sid:
@@ -303,7 +308,7 @@ def get_history():
         ).fetchall()
     return jsonify({"history": [dict(row) for row in rows]})
 
-@app.delete("/history")
+@app.delete("/api/history")
 def clear_history():
     sid = valid_session_id((request.get_json(silent=True) or {}).get("session_id"))
     if not sid:
@@ -316,7 +321,7 @@ def clear_history():
 def health():
     return jsonify({
         "ok": CPP_READY,
-        "code_version": "gemini-clinic-history-v1",
+        "code_version": "gemini-clinic-separate-history-page-v1",
         "history_storage": "sqlite",
         "history_database_path": str(CHAT_DB_PATH),
         "deployed_commit": os.getenv("RENDER_GIT_COMMIT"),
