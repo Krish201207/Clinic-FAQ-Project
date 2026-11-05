@@ -1,6 +1,4 @@
 import os
-import re
-import subprocess
 import sqlite3
 import uuid
 import threading
@@ -8,6 +6,8 @@ import time
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
+
+from clinic_classifier import classify_question, get_classifier
 
 try:
     from google import genai
@@ -19,9 +19,7 @@ except Exception as exc:
     GEMINI_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
 
 BASE_DIR = Path(__file__).resolve().parent
-CPP_SOURCE = BASE_DIR / "clinic_assistant.cpp"
 FAQ_FILE = BASE_DIR / "FQA.txt"
-EXECUTABLE = BASE_DIR / ("ClinicAssistant.exe" if os.name == "nt" else "ClinicAssistant")
 MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
 API_KEY = os.getenv("GEMINI_API_KEY")
 
@@ -76,22 +74,13 @@ def save_chat_turn(session_id, question, answer, classification):
 
 init_history_db()
 
-def build_cpp():
-    if not CPP_SOURCE.exists():
-        raise RuntimeError("clinic_assistant.cpp is missing")
-    result = subprocess.run(
-        ["g++", "-std=c++17", "-O2", str(CPP_SOURCE), "-o", str(EXECUTABLE)],
-        capture_output=True, text=True, timeout=120
-    )
-    if result.returncode:
-        raise RuntimeError(result.stderr or "C++ compilation failed")
-
-
+# Load and validate the pure-Python classifier once when the application starts.
 try:
-    build_cpp()
-    CPP_READY, BUILD_ERROR = True, None
+    CLASSIFIER = get_classifier()
+    CLASSIFIER_READY, CLASSIFIER_ERROR = True, None
 except Exception as exc:
-    CPP_READY, BUILD_ERROR = False, str(exc)
+    CLASSIFIER = None
+    CLASSIFIER_READY, CLASSIFIER_ERROR = False, str(exc)
 
 
 def _get_or_create_faq_cache(faq_content, prompt):
@@ -257,32 +246,10 @@ Use concise, clear language. Return only the clinic-related answer.
 
 
 def run_faq_engine(question):
-    result = subprocess.run(
-        [str(EXECUTABLE), "--machine"],
-        input=question + "\nexit\n",
-        capture_output=True, text=True, cwd=BASE_DIR, timeout=30
-    )
-    if result.returncode:
-        raise RuntimeError(result.stderr.strip() or "C++ FAQ engine failed")
-
-    output = result.stdout
-    def field(pattern):
-        match = re.search(pattern, output)
-        return match.group(1).strip() if match else ""
-
-    category = field(r"Classification:\s*(ROUTINE|SENSITIVE|UNSUPPORTED)")
-    if not category:
-        raise ValueError(output.strip() or "C++ returned no classification")
-
-    return {
-        "category": category,
-        "score": field(r"Prediction score:\s*([-0-9.]+)"),
-        "margin": field(r"Top-two margin:\s*([-0-9.]+)"),
-        "matched": field(r"Matched question:\s*(.*)"),
-        "answer": field(r"Retrieved answer:\s*(.*)"),
-        "retrieval": field(r"Retrieval status:\s*(STRONG|WEAK)"),
-        "safety": field(r"Safety flag:\s*(EMERGENCY|SENSITIVE)")
-    }
+    """Run the classifier in Python; no subprocess or C++ executable."""
+    if not CLASSIFIER_READY or CLASSIFIER is None:
+        raise RuntimeError("Python classifier is not ready: " + str(CLASSIFIER_ERROR))
+    return classify_question(question)
 
 
 @app.get("/")
@@ -320,12 +287,14 @@ def clear_history():
 @app.get("/health")
 def health():
     return jsonify({
-        "ok": CPP_READY,
-        "code_version": "gemini-clinic-separate-history-page-v1",
+        "ok": CLASSIFIER_READY,
+        "code_version": "gemini-clinic-python-classifier-separate-history-v1",
         "history_storage": "sqlite",
         "history_database_path": str(CHAT_DB_PATH),
         "deployed_commit": os.getenv("RENDER_GIT_COMMIT"),
-        "cpp_ready": CPP_READY,
+        "python_classifier_ready": CLASSIFIER_READY,
+        "embedding_file_ready": (BASE_DIR / "Embeddings.vec").exists(),
+        "classifier_weights_ready": (BASE_DIR / "classifier_weights.txt").exists(),
         "faq_file_ready": FAQ_FILE.exists(),
         "gemini_package_installed": genai is not None,
         "gemini_import_error": GEMINI_IMPORT_ERROR,
@@ -337,13 +306,13 @@ def health():
         "explicit_cache_attempted": bool(_cache_name or _cache_creation_failed),
         "explicit_cache_error": _cache_error,
         "cache_ttl_seconds": CACHE_TTL_SECONDS,
-        "error": BUILD_ERROR
+        "error": CLASSIFIER_ERROR
     })
 
 @app.post("/ask")
 def ask():
-    if not CPP_READY:
-        return jsonify({"error": "C++ engine is not ready: " + str(BUILD_ERROR)}), 500
+    if not CLASSIFIER_READY:
+        return jsonify({"error": "Python classifier is not ready: " + str(CLASSIFIER_ERROR)}), 500
 
     payload = request.get_json(silent=True) or {}
     question = str(payload.get("question", "")).strip()
@@ -357,14 +326,12 @@ def ask():
 
     try:
         data = run_faq_engine(question)
-    except subprocess.TimeoutExpired:
-        return jsonify({"error": "The FAQ engine timed out. Please try again."}), 504
     except Exception as exc:
         app.logger.exception("FAQ engine failed")
         return jsonify({"error": str(exc)}), 500
 
     category = data["category"]
-    score = float(data["score"]) if data["score"] else None
+    score = float(data["score"]) if data.get("score") is not None else None
 
     if category == "SENSITIVE":
         if data["safety"] == "EMERGENCY":
