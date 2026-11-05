@@ -52,6 +52,10 @@
     .history-heading h2 { margin:0; font-size:1.1rem; color:var(--navy); }
     .history-item { border:1px solid var(--border); border-radius:13px; padding:14px; margin-bottom:12px; }
     .history-time { color:var(--muted); font-size:.75rem; margin-bottom:9px; }
+    .history-topline { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+    .classification-badge { display:inline-flex; align-items:center; border-radius:999px; padding:4px 9px; font-size:.7rem; font-weight:800; letter-spacing:.03em; background:#e8efff; color:#1e40af; }
+    .classification-badge.sensitive { background:#fff1f2; color:#be123c; }
+    .classification-badge.unsupported { background:#fff7ed; color:#c2410c; }
     .history-label { color:var(--navy); font-size:.78rem; font-weight:700; margin:8px 0 3px; }
     .history-text { white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.5; }
     .empty-history { color:var(--muted); text-align:center; padding:65px 15px; }
@@ -256,10 +260,25 @@
       historyPanel.hidden = !showHistory;
       chatTab.classList.toggle("active", !showHistory);
       historyTab.classList.toggle("active", showHistory);
+      localStorage.setItem("clinic_active_tab", showHistory ? "history" : "chat");
       if (showHistory) loadHistory();
     }
     chatTab.addEventListener("click", () => switchTab("chat"));
     historyTab.addEventListener("click", () => switchTab("history"));
+
+    // Restore the selected tab after a page reload and refresh history when the
+    // user returns to this browser tab.
+    const savedTab = localStorage.getItem("clinic_active_tab");
+    switchTab(savedTab === "history" ? "history" : "chat");
+    window.addEventListener("pageshow", () => {
+      if (localStorage.getItem("clinic_active_tab") === "history") loadHistory();
+    });
+    window.addEventListener("focus", () => {
+      if (localStorage.getItem("clinic_active_tab") === "history") loadHistory();
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden && localStorage.getItem("clinic_active_tab") === "history") loadHistory();
+    });
 
     async function loadHistory() {
       historyList.textContent = "Loading history...";
@@ -278,10 +297,21 @@
         for (const item of data.history) {
           const card = document.createElement("article");
           card.className = "history-item";
+          const topLine = document.createElement("div");
+          topLine.className = "history-topline";
           const time = document.createElement("div");
           time.className = "history-time";
           const date = new Date(item.created_at);
           time.textContent = Number.isNaN(date.getTime()) ? item.created_at : date.toLocaleString();
+
+          const category = document.createElement("span");
+          const categoryValue = String(item.classification || "UNKNOWN").toUpperCase();
+          category.className = "classification-badge" +
+            (categoryValue === "SENSITIVE" ? " sensitive" :
+             categoryValue === "UNSUPPORTED" ? " unsupported" : "");
+          category.textContent = "CLASSIFIED: " + categoryValue;
+          topLine.append(time, category);
+
           const qLabel = document.createElement("div");
           qLabel.className = "history-label";
           qLabel.textContent = "YOU ASKED";
@@ -294,7 +324,7 @@
           const a = document.createElement("div");
           a.className = "history-text";
           a.textContent = item.answer;
-          card.append(time, qLabel, q, aLabel, a);
+          card.append(topLine, qLabel, q, aLabel, a);
           historyList.append(card);
         }
       } catch (error) {
@@ -390,6 +420,8 @@
           addMessage(detail, "assistant", "error");
         } else {
           addMessage(getAssistantText(data), "assistant");
+          // Keep the history view up to date after each successfully saved answer.
+          if (localStorage.getItem("clinic_active_tab") === "history") loadHistory();
         }
       } catch (error) {
         typing.remove();
