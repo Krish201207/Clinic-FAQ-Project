@@ -206,8 +206,8 @@ int main() {
 
     if (!loadEmbeddingHeader() || !loadClassifier()) return 1;
 
-    cout << "FAQ retrieval is handled by the Python/Gemini backend.\\n";
-    cout << "Type 'exit' to quit.\\n\\n";
+    cout << "FAQ retrieval is handled by the Python/Gemini backend.\n";
+    cout << "Type 'exit' to quit.\n\n";
 
     string query;
     while (true) {
@@ -227,15 +227,29 @@ int main() {
         int known = 0, total = 0;
         vector<double> qVec = makeSentenceVector(query, known, total);
         cout << "\nVector coverage: " << known << "/" << total << " words.\n";
+        // If no words are in the embedding vocabulary, the classifier cannot
+        // make a valid prediction. Forward the question to Flask/Gemini as
+        // UNSUPPORTED instead of rejecting it. Obvious emergencies stay blocked.
+        vector<double> probs(CLASS_COUNT, 0.0);
+        int category = UNSUPPORTED;
+
         if (known == 0) {
-            cout << "Assistant: I could not vectorize this question using the available vocabulary. "
-                    "Please rephrase it or contact clinic staff.\n\n";
+            if (emergencyOverride(query)) category = SENSITIVE;
+
+            cout << "Classification: " << LABELS[category] << "\n";
+            if (category == SENSITIVE)
+                cout << "Safety flag: EMERGENCY\n";
+            cout << "Prediction score: 0\n";
+            cout << "Top-two margin: 0\n";
+            cout << "Matched question: \n";
+            cout << "Retrieved answer: \n";
+            cout << "Retrieval status: WEAK\n";
+            cout << "Assistant: Question forwarded to Flask/Gemini because no embedding words were found.\n\n";
             continue;
         }
 
-        // 2. Predict category using trained W and b.
-        vector<double> probs;
-        int category = classify(qVec, probs);
+        // Classify questions that have at least one known embedding word.
+        category = classify(qVec, probs);
         if (emergencyOverride(query)) category = SENSITIVE;
 
         cout << "Classification: " << LABELS[category] << "\n";
@@ -265,12 +279,12 @@ int main() {
         // ROUTINE questions are passed to Flask, which supplies FAQ context
         // to Gemini. C++ no longer performs cosine similarity or FAQ matching.
         double topProbability = *max_element(probs.begin(), probs.end());
-        cout << "Prediction score: " << topProbability << "\\n";
-        cout << "Top-two margin: 0\\n";
-        cout << "Matched question: \\n";
-        cout << "Retrieved answer: \\n";
-        cout << "Retrieval status: WEAK\\n";
-        cout << "Assistant: Routine question forwarded to the generative FAQ backend.\\n\\n";
+        cout << "Prediction score: " << topProbability << "\n";
+        cout << "Top-two margin: 0\n";
+        cout << "Matched question: \n";
+        cout << "Retrieved answer: \n";
+        cout << "Retrieval status: WEAK\n";
+        cout << "Assistant: Routine question forwarded to the generative FAQ backend.\\n\n";
     }
 
     cout << "Assistant closed.\n";
