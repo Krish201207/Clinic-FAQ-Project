@@ -14,6 +14,7 @@ except Exception as exc:
 
 BASE_DIR = Path(__file__).resolve().parent
 CPP_SOURCE = BASE_DIR / "clinic_assistant.cpp"
+FAQ_FILE = BASE_DIR / "FQA.txt"
 EXECUTABLE = BASE_DIR / ("ClinicAssistant.exe" if os.name == "nt" else "ClinicAssistant")
 MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
 API_KEY = os.getenv("GROQ_API_KEY")
@@ -58,28 +59,26 @@ def ask_groq(system_prompt, user_prompt):
     return answer
 
 
-def numbers(text):
-    return set(re.findall(r"\d+", text))
+def generate_faq_answer(question):
+    if not FAQ_FILE.exists():
+        raise RuntimeError("FQA.txt is missing")
+    faq_content = FAQ_FILE.read_text(encoding="utf-8")
 
-
-def generate_faq_answer(question, faq_question, faq_answer):
     prompt = (
-        "Briefly paraphrase the FAQ answer in simple, natural English. "
-        "Change the wording and sentence structure; do not copy it verbatim. "
-        "Keep every fact, number, time, price, location and condition unchanged. "
-        "Add nothing. Give no diagnosis or treatment advice."
+        "You are a clinic FAQ assistant. Find the single most relevant answer "
+        "in the supplied FAQ and answer the patient's question using only that "
+        "information. Briefly rephrase it in simple, natural English so it is "
+        "not copied word for word. Preserve all facts, numbers, times, prices "
+        "and conditions. Do not combine unrelated FAQ entries or add information. "
+        "If the FAQ does not contain the answer, say so and direct the patient "
+        "to clinic reception. Do not diagnose or give treatment advice. "
+        "Return only the answer."
     )
     context = (
-        f"Patient question: {question}\\n"
-        f"FAQ question: {faq_question}\\n"
-        f"FAQ answer: {faq_answer}"
+        f"Complete clinic FAQ:\n{faq_content}\n\n"
+        f"Patient question: {question}"
     )
-    answer = ask_groq(prompt, context)
-    if numbers(faq_answer) != numbers(answer):
-        raise ValueError("Generated answer changed or omitted a number")
-    if answer.casefold().strip() == faq_answer.casefold().strip():
-        raise ValueError("Groq copied the FAQ answer verbatim")
-    return answer
+    return ask_groq(prompt, context)
 
 
 def run_faq_engine(question):
@@ -120,9 +119,10 @@ def home():
 def health():
     return jsonify({
         "ok": CPP_READY,
-        "code_version": "groq-compact-v1",
+        "code_version": "groq-full-faq-v1",
         "deployed_commit": os.getenv("RENDER_GIT_COMMIT"),
         "cpp_ready": CPP_READY,
+        "faq_file_ready": FAQ_FILE.exists(),
         "groq_package_installed": Groq is not None,
         "groq_import_error": GROQ_IMPORT_ERROR,
         "api_key_set": bool(API_KEY),
@@ -177,22 +177,19 @@ def ask():
         })
 
     matched, retrieved = data["matched"], data["answer"]
-    if data["retrieval"] != "STRONG" or not matched or not retrieved:
-        answer = ("I couldn't find a sufficiently reliable answer in the clinic FAQ. "
-                  "Please contact clinic staff for confirmation.")
-        return jsonify({
-            "classification": category, "prediction_score": score,
-            "matched_question": matched or None, "retrieved_answer": retrieved or None,
-            "answer": answer, "generation": "weak_match_escalation",
-            "ai_rephrased": False, "response_source": "fixed_escalation"
-        })
-
     try:
-        answer = generate_faq_answer(question, matched, retrieved)
-        generation, source, error = "rag", "groq", None
+        # The complete FQA.txt is sent with every routine question.
+        answer = generate_faq_answer(question)
+        generation, source, error = "full_faq_context", "groq", None
     except Exception as exc:
         app.logger.exception("Groq answer generation failed")
-        answer, generation, source, error = retrieved, "retrieval_fallback", "faq_original", str(exc)
+        if retrieved:
+            answer, generation, source = retrieved, "retrieval_fallback", "faq_original"
+        else:
+            answer = ("I couldn't generate an answer. Please contact clinic staff "
+                      "for confirmation.")
+            generation, source = "generation_failed", "fixed_escalation"
+        error = str(exc)
 
     return jsonify({
         "classification": category,
@@ -202,7 +199,7 @@ def ask():
         "retrieved_answer": retrieved,
         "answer": answer,
         "generation": generation,
-        "ai_rephrased": generation == "rag",
+        "ai_rephrased": generation == "full_faq_context",
         "response_source": source,
         "generation_error": error
     })
