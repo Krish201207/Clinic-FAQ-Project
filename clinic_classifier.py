@@ -5,16 +5,6 @@ import numpy as np
 
 BASE_DIR = Path(__file__).resolve().parent
 LABELS = ("ROUTINE", "SENSITIVE", "UNSUPPORTED")
-EMERGENCY_PHRASES = (
-    "severe chest pain",
-    "not breathing",
-    "turned blue",
-    "difficulty breathing",
-    "pregnant and bleeding",
-    "want to end my life",
-    "kill myself",
-    "immediate danger",
-)
 TOKEN_RE = re.compile(r"[^a-zA-Z0-9']+")
 
 
@@ -55,20 +45,11 @@ class ClinicClassifier:
         self.biases = parameters[:, 0]
         self.weights = parameters[:, 1:]
 
-    def _emergency_override(self, question):
-        text = " " + self.normalize(question).strip() + " "
-        return any(
-            " " + self.normalize(phrase).strip() + " " in text
-            for phrase in EMERGENCY_PHRASES
-        )
-
     def classify(self, question):
         tokens = self.tokenize(question)
         known = [self.word_offsets[word] for word in tokens if word in self.word_offsets]
-        emergency = self._emergency_override(question)
-
         if not known:
-            category = "SENSITIVE" if emergency else "UNSUPPORTED"
+            category = "UNSUPPORTED"
             return {
                 "category": category,
                 "score": 0.0,
@@ -76,7 +57,7 @@ class ClinicClassifier:
                 "matched": "",
                 "answer": "",
                 "retrieval": "WEAK",
-                "safety": "EMERGENCY" if emergency else "",
+                "safety": "",
                 "coverage": {"known": 0, "total": len(tokens)},
                 "class_scores": dict.fromkeys(LABELS, 0.0),
             }
@@ -91,7 +72,7 @@ class ClinicClassifier:
         probabilities /= probabilities.sum()
 
         predicted = int(probabilities.argmax())
-        category = "SENSITIVE" if emergency else LABELS[predicted]
+        category = LABELS[predicted]
 
         return {
             "category": category,
@@ -100,9 +81,7 @@ class ClinicClassifier:
             "matched": "",
             "answer": "",
             "retrieval": "WEAK",
-            "safety": "EMERGENCY" if emergency else (
-                "SENSITIVE" if category == "SENSITIVE" else ""
-            ),
+            "safety": "SENSITIVE" if category == "SENSITIVE" else "",
             "coverage": {"known": len(known), "total": len(tokens)},
             "class_scores": {
                 label: float(probabilities[i])
