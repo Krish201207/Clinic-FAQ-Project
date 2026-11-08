@@ -93,20 +93,27 @@ def _get_or_create_faq_cache(faq_content, prompt):
         if _cache_creation_failed:
             return None
 
-        cache = client.caches.create(
-            model=MODEL,
-            config=types.CreateCachedContentConfig(
-                display_name="community-clinic-faq",
-                system_instruction=prompt,
-                contents=faq_content,
-                ttl=f"{CACHE_TTL_SECONDS}s"
+        try:
+            cache = client.caches.create(
+                model=MODEL,
+                config=types.CreateCachedContentConfig(
+                    display_name="community-clinic-faq",
+                    system_instruction=prompt,
+                    contents=faq_content,
+                    ttl=f"{CACHE_TTL_SECONDS}s"
+                )
             )
-        )
-        _cache_name = cache.name
-        _cache_expires_at = time.monotonic() + max(60, CACHE_TTL_SECONDS - 60)
-        _cache_error = None
-        app.logger.info("Gemini FAQ cache created and ready.")
-        return _cache_name
+            _cache_name = cache.name
+            _cache_expires_at = time.monotonic() + max(60, CACHE_TTL_SECONDS - 60)
+            _cache_error = None
+            app.logger.info("Gemini FAQ cache created and ready.")
+            return _cache_name
+
+        except Exception as e:
+            _cache_creation_failed = True
+            _cache_error = str(e)
+            app.logger.exception("Gemini cache creation failed; using inline FAQ.")
+            return None
 
 
 def _generate_with_cache_or_fallback(question, faq_context, system_instruction, max_output_tokens=120):
@@ -122,27 +129,36 @@ def _generate_with_cache_or_fallback(question, faq_context, system_instruction, 
     cache_name = _get_or_create_faq_cache(faq_context, stable_cached_instruction)
 
     if cache_name:
-        response = client.models.generate_content(
-            model=MODEL,
-            contents=f"{system_instruction}\n\n{question}",
-            config=types.GenerateContentConfig(
-                cached_content=cache_name,
-                temperature=0.0,
-                max_output_tokens=max_output_tokens
+        try:
+            response = client.models.generate_content(
+                model=MODEL,
+                contents=f"{system_instruction}\\n\\n{question}",
+                config=types.GenerateContentConfig(
+                    cached_content=cache_name,
+                    temperature=0.0,
+                    max_output_tokens=max_output_tokens
+                )
             )
+            return (response.text or "").strip()
+        except Exception as e:
+            global _cache_creation_failed, _cache_error, _cache_name
+            _cache_creation_failed = True
+            _cache_error = str(e)
+            _cache_name = None
+            app.logger.exception("Gemini cached generation failed; retrying with inline FAQ.")
+
+    context = f"CLINIC FAQ:\\n{faq_context}\\n\\n{question}"
+    response = client.models.generate_content(
+        model=MODEL,
+        contents=context,
+        config=types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            temperature=0.0,
+            max_output_tokens=max_output_tokens
         )
-    else:
-        context = f"CLINIC FAQ:\n{faq_context}\n\n{question}"
-        response = client.models.generate_content(
-            model=MODEL,
-            contents=context,
-            config=types.GenerateContentConfig(
-                system_instruction=system_instruction,
-                temperature=0.0,
-                max_output_tokens=max_output_tokens
-            )
-        )
+    )
     return (response.text or "").strip()
+
 
 
 def generate_answer(question):
@@ -258,7 +274,13 @@ def ask():
     if len(question) > 500:
         return jsonify({"error": "Please keep the question under 500 characters."}), 400
 
-    data = run_faq_engine(question)
+    try:
+        data = run_faq_engine(question)
+    except Exception:
+        app.logger.exception("FAQ classifier failed.")
+        return jsonify({
+            "error": "The clinic question classifier is temporarily unavailable. Please try again later."
+        }), 503
 
     category = data["category"]
     score = float(data["score"]) if data.get("score") is not None else None
@@ -277,7 +299,14 @@ def ask():
             "ai_rephrased": False, "response_source": "fixed_safety_message", "saved": True
         })
 
-    answer, answer_scope = generate_answer(question)
+    try:
+        answer, answer_scope = generate_answer(question)
+    except Exception:
+        app.logger.exception("Gemini answer generation failed.")
+        return jsonify({
+            "error": "The AI service could not generate an answer right now. Please try again later."
+        }), 502
+
     generation, source, error = "clinic_generation", "gemini", None
 
     save_chat_turn(session_id, question, answer, category)
