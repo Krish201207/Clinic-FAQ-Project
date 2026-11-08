@@ -10,14 +10,8 @@ from flask import Flask, jsonify, request, send_from_directory
 
 from clinic_classifier import classify_question, get_classifier
 
-try:
-    from google import genai
-    from google.genai import types
-    GEMINI_IMPORT_ERROR = None
-except Exception as exc:
-    genai = None
-    types = None
-    GEMINI_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
+from google import genai
+from google.genai import types
 
 BASE_DIR = Path(__file__).resolve().parent
 FAQ_FILE = BASE_DIR / "FQA.txt"
@@ -49,10 +43,9 @@ def get_db_connection():
     return db
 
 def valid_session_id(value):
-    try:
-        return str(uuid.UUID(str(value)))
-    except (ValueError, TypeError, AttributeError):
-        return None
+    value = str(value or "")
+    pattern = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+    return value.lower() if re.fullmatch(pattern, value) else None
 
 def init_history_db():
     with get_db_connection() as db:
@@ -76,12 +69,9 @@ def save_chat_turn(session_id, question, answer, classification):
 init_history_db()
 
 # Load and validate the pure-Python classifier once when the application starts.
-try:
-    CLASSIFIER = get_classifier()
-    CLASSIFIER_READY, CLASSIFIER_ERROR = True, None
-except Exception as exc:
-    CLASSIFIER = None
-    CLASSIFIER_READY, CLASSIFIER_ERROR = False, str(exc)
+CLASSIFIER = get_classifier()
+CLASSIFIER_READY = True
+CLASSIFIER_ERROR = None
 
 
 def _get_or_create_faq_cache(faq_content, prompt):
@@ -103,30 +93,20 @@ def _get_or_create_faq_cache(faq_content, prompt):
         if _cache_creation_failed:
             return None
 
-        try:
-            cache = client.caches.create(
-                model=MODEL,
-                config=types.CreateCachedContentConfig(
-                    display_name="community-clinic-faq",
-                    system_instruction=prompt,
-                    contents=faq_content,
-                    ttl=f"{CACHE_TTL_SECONDS}s"
-                )
+        cache = client.caches.create(
+            model=MODEL,
+            config=types.CreateCachedContentConfig(
+                display_name="community-clinic-faq",
+                system_instruction=prompt,
+                contents=faq_content,
+                ttl=f"{CACHE_TTL_SECONDS}s"
             )
-            _cache_name = cache.name
-            # Refresh a little before the provider-side expiry.
-            _cache_expires_at = time.monotonic() + max(60, CACHE_TTL_SECONDS - 60)
-            _cache_error = None
-            app.logger.info("Gemini FAQ cache created and ready.")
-            return _cache_name
-        except Exception as exc:
-            _cache_creation_failed = True
-            _cache_error = f"{type(exc).__name__}: {exc}"
-            app.logger.warning(
-                "Explicit Gemini caching is unavailable; using normal requests: %s",
-                _cache_error
-            )
-            return None
+        )
+        _cache_name = cache.name
+        _cache_expires_at = time.monotonic() + max(60, CACHE_TTL_SECONDS - 60)
+        _cache_error = None
+        app.logger.info("Gemini FAQ cache created and ready.")
+        return _cache_name
 
 
 def _generate_with_cache_or_fallback(question, faq_context, system_instruction, max_output_tokens=120):
@@ -392,11 +372,7 @@ def ask():
             "saved": True
         })
 
-    try:
-        data = run_faq_engine(question)
-    except Exception as exc:
-        app.logger.exception("FAQ engine failed")
-        return jsonify({"error": str(exc)}), 500
+    data = run_faq_engine(question)
 
     category = data["category"]
     score = float(data["score"]) if data.get("score") is not None else None
@@ -415,18 +391,12 @@ def ask():
             "ai_rephrased": False, "response_source": "fixed_safety_message", "saved": True
         })
 
-    try:
-        # Gemini checks topic scope first. Only clinic-related questions are answered.
-        answer, answer_scope = generate_answer(question)
-        if answer_scope == "out_of_scope":
-            generation, source, error = "blocked_out_of_scope", "scope_gate", None
-        else:
-            generation, source, error = "clinic_generation", "gemini", None
-    except Exception as exc:
-        app.logger.exception("Gemini answer generation failed")
-        answer = ("I'm unable to generate a response right now. Please try again "
-                  "later or contact clinic reception for clinic-related questions.")
-        generation, source, error = "generation_failed", "fixed_escalation", str(exc)
+    # Gemini checks topic scope first. Only clinic-related questions are answered.
+    answer, answer_scope = generate_answer(question)
+    if answer_scope == "out_of_scope":
+        generation, source, error = "blocked_out_of_scope", "scope_gate", None
+    else:
+        generation, source, error = "clinic_generation", "gemini", None
 
     save_chat_turn(session_id, question, answer, category)
     return jsonify({
