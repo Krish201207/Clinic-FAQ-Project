@@ -1,4 +1,3 @@
-"""NumPy-optimized softmax classifier trainer."""
 
 import math
 import random
@@ -113,7 +112,7 @@ def main():
             probabilities = softmax(logits)
             total_loss -= math.log(max(probabilities[correct_label], 1e-12))
 
-            # Keep online updates in the original class-by-class order.
+           
             for class_index in range(CLASS_COUNT):
                 error = probabilities[class_index] - (
                     1.0 if class_index == correct_label else 0.0
