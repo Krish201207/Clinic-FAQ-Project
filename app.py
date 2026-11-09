@@ -21,9 +21,7 @@ API_KEY = os.getenv("GEMINI_API_KEY")
 app = Flask(__name__, static_folder="static")
 client = genai.Client(api_key=API_KEY) if genai and API_KEY else None
 
-# Explicit FAQ cache. It is created lazily once per application process and
-# reused until it expires. If Google's API plan/model does not allow explicit
-# caching, the app safely falls back to ordinary generation.
+
 CACHE_TTL_SECONDS = int(os.getenv("GEMINI_CACHE_TTL_SECONDS", "3600"))
 _cache_lock = threading.Lock()
 _cache_name = None
@@ -33,7 +31,6 @@ _cache_error = None
 
 
 
-# Persistent conversation history. On Render, set CHAT_DB_PATH to a mounted disk path.
 CHAT_DB_PATH = Path(os.getenv("CHAT_DB_PATH", str(BASE_DIR / "clinic_history.db")))
 
 def get_db_connection():
@@ -68,7 +65,6 @@ def save_chat_turn(session_id, question, answer, classification):
 
 init_history_db()
 
-# Load and validate the pure-Python classifier once when the application starts.
 CLASSIFIER = get_classifier()
 CLASSIFIER_READY = True
 CLASSIFIER_ERROR = None
@@ -82,7 +78,6 @@ def _get_or_create_faq_cache(faq_content, prompt):
     if _cache_name and now < _cache_expires_at:
         return _cache_name
 
-    # Do not repeatedly retry a cache creation that this API key/model cannot use.
     if _cache_creation_failed:
         return None
 
