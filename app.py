@@ -71,7 +71,7 @@ CLASSIFIER_ERROR = None
 
 
 def _get_or_create_faq_cache(faq_content, prompt):
-    """Create the FAQ cache once, then reuse it until its TTL expires."""
+   
     global _cache_name, _cache_expires_at, _cache_creation_failed, _cache_error
 
     now = time.monotonic()
