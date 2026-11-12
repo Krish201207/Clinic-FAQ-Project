@@ -31,3 +31,13 @@ function updateClock(){const el=$('#live-clock');if(el)el.textContent=new Intl.D
 updateClock();setInterval(updateClock,30000);
 const dateInput=$('#appointment_date');if(dateInput)dateInput.min=new Date().toISOString().slice(0,10);
 loadDashboardMetrics();
+
+
+// Profile dropdown: logout is shown only after the profile control is clicked.
+const profileToggle=$('#profile-toggle'), profileMenu=$('#profile-menu');
+profileToggle?.addEventListener('click',()=>{const open=profileMenu.hidden;profileMenu.hidden=!open;profileToggle.setAttribute('aria-expanded',String(open));});
+document.addEventListener('click',e=>{if(profileMenu&&!profileMenu.hidden&&!e.target.closest('.profile-wrap')){profileMenu.hidden=true;profileToggle?.setAttribute('aria-expanded','false')}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&profileMenu&&!profileMenu.hidden){profileMenu.hidden=true;profileToggle?.setAttribute('aria-expanded','false')}});
+
+// Chat quick actions populate the normal chat input, so the same backend handles them.
+document.querySelectorAll('[data-chat-prompt]').forEach(button=>button.addEventListener('click',()=>{const input=$('#chat-question');input.value=button.dataset.chatPrompt;input.focus();}));
