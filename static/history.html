@@ -222,7 +222,7 @@
     <section class="history-shell" aria-label="Previous conversations">
       <div class="history-intro">
         <div class="history-heading">
-          <div><h2>Activity overview</h2><p class="history-subtitle">A live summary of this browser's saved conversations.</p></div>
+          <div><h2>Activity overview</h2><p class="history-subtitle">A live summary of conversations saved to your signed-in account.</p></div>
           <button class="small-button" id="refresh-history" type="button">↻ Refresh records</button>
         </div>
         <div class="stats-grid" aria-live="polite">
@@ -330,7 +330,7 @@
     async function loadHistory() {
       historyList.textContent = "Loading history...";
       try {
-        const response = await fetch(`/api/history?session_id=${encodeURIComponent(sessionId)}`, { cache: "no-store" });
+        const response = await fetch("/api/chat-history", { credentials: "same-origin", cache: "no-store" });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || "Could not load history.");
         allHistory = data.history || [];
@@ -347,13 +347,13 @@
 
     refreshButton.addEventListener("click", loadHistory);
     clearButton.addEventListener("click", async () => {
-      if (!confirm("Delete all saved conversations for this browser?")) return;
+      if (!confirm("Delete all conversations saved to your account?")) return;
       clearButton.disabled = true;
       try {
-        const response = await fetch("/api/history", {
+        const response = await fetch("/api/chat-history", {
           method: "DELETE",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ session_id: sessionId })
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" }
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || "Could not clear history.");

@@ -54,3 +54,13 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
 .history-list{display:grid;gap:12px}.history-entry{padding:16px 18px!important;border-left:4px solid #4c91b6!important;background:linear-gradient(110deg,#fff,#f4f8fb)!important}.history-entry:nth-child(3n+2){border-left-color:#45a28a!important}.history-entry:nth-child(3n){border-left-color:#d88b68!important}.history-entry b{font-size:13px;color:#24495a}.history-entry small{display:block;margin-top:6px;color:#83939a}.history-entry p{white-space:pre-wrap;color:#4b626c;margin:10px 0 0;font-size:12px}
 .dark-mode .assistant-guide{background:linear-gradient(115deg,#1d3d52,#1d4a45,#4b3a36);border-color:#345761}.dark-mode .assistant-guide p,.dark-mode .price-card small,.dark-mode .history-entry small{color:#b4c6cc}.dark-mode .price-card,.dark-mode .history-entry{background:#1b3441!important;border-color:#34505b}.dark-mode .price-card b,.dark-mode .history-entry b,.dark-mode .history-entry p{color:#e8f0f2}.dark-mode .chat-examples button{background:#243f4c;color:#dcebed;border-color:#3c5a64}
 @media(max-width:650px){.price-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.assistant-guide{padding:13px}.history-entry{padding:13px!important}}
+
+
+/* Conversation history classification labels */
+.history-entry { padding: 15px 16px; margin: 10px 0; border: 1px solid var(--border); border-radius: 12px; background: var(--surface, #fff); }
+.history-topline { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+.classification-badge { display:inline-flex; border-radius:999px; padding:4px 10px; font-size:.7rem; font-weight:800; background:#e5f6ed; color:#087447; }
+.classification-badge.sensitive { background:#fff0f2; color:#be3450; }
+.classification-badge.unsupported { background:#fff5e7; color:#a85d0b; }
+.history-label { margin:9px 0 3px; color:var(--navy); font-size:.72rem; font-weight:800; }
+.history-text { white-space:pre-wrap; overflow-wrap:anywhere; }
