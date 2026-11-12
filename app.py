@@ -586,7 +586,8 @@ def _chat_action(question, user):
     )
     list_doctors = any(x in low for x in (
         'doctor names', 'list doctors', 'show doctors', 'available doctors',
-        'doctor availability', 'which doctors', 'medical staff'
+        'doctor availability', 'which doctors', 'medical staff', 'cardiologist',
+        'dermatologist', 'orthopedic doctor', 'orthopaedic doctor'
     ))
     list_appointments = any(x in low for x in (
         'my appointments', 'show appointments', 'list appointments',
@@ -607,7 +608,7 @@ def _chat_action(question, user):
         ).fetchall()]
 
         # Explicit non-booking commands must take priority over an unfinished booking.
-        if list_doctors:
+        if list_doctors and not booking_words:
             return {'answer': 'Medical staff and schedules:\n' + '\n'.join(
                 f"{d['name']} — {d['department']}; {d['days']}, {d['start_time']}-{d['end_time']}; consultation fee ₹{d['consultation_fee']:.2f}"
                 for d in doctors
