@@ -12,13 +12,13 @@ async function loadRecords(){const d=await api('/api/records');$('#records-list'
 if($('#record-form'))$('#record-form').addEventListener('submit',async e=>{e.preventDefault();try{const r=await fetch('/api/records',{method:'POST',credentials:'same-origin',body:new FormData(e.target)});const d=await r.json();if(!r.ok)throw Error(d.error);e.target.reset();loadRecords()}catch(x){notify(x)}});
 if($('#chat-form'))$('#chat-form').addEventListener('submit',async e=>{e.preventDefault();const q=$('#chat-question').value.trim();if(!q)return;const log=$('#chat-log');log.insertAdjacentHTML('beforeend',`<div class="mine">${esc(q)}</div>`);$('#chat-question').value='';try{const d=await api('/ask',{method:'POST',body:JSON.stringify({question:q})});log.insertAdjacentHTML('beforeend',`<div class="bot">${esc(d.answer)}</div>`)}catch(x){log.insertAdjacentHTML('beforeend',`<div class="bot">${esc(x.message)}</div>`)}log.scrollTop=log.scrollHeight});
 async function loadAnalytics(){const d=await api('/api/analytics');$('#analytics-summary').innerHTML=[['Total chatbot queries',d.total_queries],['Appointments',d.appointments],['Registered patients',d.patients],['Unpaid bill total',money(d.unpaid_total)]].map(x=>`<article><span>${x[0]}</span><strong>${x[1]}</strong></article>`).join('');$('#topic-list').innerHTML=d.topics.map(x=>`<article><b>${esc(x.label)}</b><strong>${x.count}</strong></article>`).join('')||'<p>No query data yet.</p>';$('#category-list').innerHTML=d.categories.map(x=>`<article><b>${esc(x.label)}</b><strong>${x.count}</strong></article>`).join('')||'<p>No classifications yet.</p>'}
-function loadTab(id){const map={doctors:loadDoctors,appointments:loadAppointments,billing:loadBills,records:loadRecords,medicines:loadMedicines,analytics:loadAnalytics};if(map[id])map[id]().catch(notify)}Promise.all([loadDoctors(),loadAppointments(),loadBills(),loadRecords(),loadMedicines()]).catch(notify);
+function loadTab(id){const map={doctors:loadDoctors,appointments:loadAppointments,billing:loadBills,records:loadRecords,medicines:loadMedicines,analytics:loadAnalytics};if(map[id])map[id]().catch(notify)}
 
 // Executive dashboard enhancements: live KPIs, workspace search, theme and print controls.
 async function loadDashboardMetrics(){
-  try{const [a,d,b]=await Promise.all([api('/api/appointments'),api('/api/doctors'),api('/api/bills')]);
-    $('#kpi-appointments').textContent=a.appointments.length;$('#kpi-doctors').textContent=d.doctors.length;
-    const unpaid=b.bills.filter(x=>x.status==='Unpaid').reduce((sum,x)=>sum+Number(x.amount||0),0);$('#kpi-unpaid').textContent=money(unpaid);
+  try{const requests=[api('/api/appointments'),api('/api/doctors')];if(['admin','reception','patient'].includes(window.HOSPITAL_ROLE))requests.push(api('/api/bills'));const [a,d,b]=await Promise.all(requests);
+    const ka=$('#kpi-appointments'),kd=$('#kpi-doctors');if(ka)ka.textContent=a.appointments.length;if(kd)kd.textContent=d.doctors.length;
+    if(b){const unpaid=b.bills.filter(x=>x.status==='Unpaid').reduce((sum,x)=>sum+Number(x.amount||0),0);const k=$('#kpi-unpaid');if(k)k.textContent=money(unpaid);}
   }catch(e){console.warn('Dashboard metrics:',e.message)}
   if(['admin','reception'].includes(window.HOSPITAL_ROLE)){try{const x=await api('/api/analytics');$('#kpi-queries').textContent=x.total_queries}catch(e){$('#kpi-queries').textContent='—'}}else{$('#kpi-queries').textContent='Private'}
 }
@@ -41,3 +41,34 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape'&&profileMenu&&!profi
 
 // Chat quick actions populate the normal chat input, so the same backend handles them.
 document.querySelectorAll('[data-chat-prompt]').forEach(button=>button.addEventListener('click',()=>{const input=$('#chat-question');input.value=button.dataset.chatPrompt;input.focus();}));
+
+// Workspace utilities are real actions, not decorative controls.
+const refreshButton = $('#refresh-workspace');
+refreshButton?.addEventListener('click', async () => {
+  const active = document.querySelector('.panel.active')?.id || 'overview';
+  const loaders = {
+    overview: loadDashboardMetrics,
+    appointments: loadAppointments,
+    doctors: loadDoctors,
+    billing: loadBills,
+    records: loadRecords,
+    medicines: loadMedicines,
+    analytics: loadAnalytics
+  };
+  const loader = loaders[active];
+  if (!loader) { notify(new Error('There is nothing to refresh in this section.')); return; }
+  refreshButton.disabled = true;
+  refreshButton.textContent = '…';
+  try { await loader(); }
+  catch (error) { notify(error); }
+  finally { refreshButton.disabled = false; refreshButton.textContent = '↻'; }
+});
+
+// Only load modules the signed-in role is allowed to access.
+(async function initialLoad() {
+  const tasks = [loadDoctors(), loadAppointments(), loadMedicines()];
+  if (['patient', 'admin', 'reception'].includes(window.HOSPITAL_ROLE)) tasks.push(loadBills());
+  if (['patient', 'doctor', 'admin'].includes(window.HOSPITAL_ROLE)) tasks.push(loadRecords());
+  try { await Promise.all(tasks); }
+  catch (error) { notify(error); }
+})();
