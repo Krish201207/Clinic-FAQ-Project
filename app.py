@@ -535,117 +535,230 @@ def _parse_chat_time(text):
     return f'{int(m.group(1)):02d}:{m.group(2)}' if m else None
 
 
+
 def _chat_action(question, user):
-    q=question.strip(); low=q.lower()
+    q = question.strip()
+    low = q.lower()
+    booking_words = re.search(
+        r'\b(book|booking|schedule|reserve|make|set up)\b.*\b(appointment|visit|consultation)\b'
+        r'|\b(appointment|visit|consultation)\b.*\b(book|schedule|reserve|with)\b'
+        r'|\b(appointment|consultation)\s+with\s+'
+        r'|\b(see|visit|consult)\s+(?:a\s+)?(?:doctor|cardiologist|dermatologist|orthopedic|orthopaedic|physician)\b',
+        low
+    )
+    list_doctors = any(x in low for x in (
+        'doctor names', 'list doctors', 'show doctors', 'available doctors',
+        'doctor availability', 'which doctors', 'medical staff', 'cardiologist',
+        'dermatologist', 'orthopedic doctor', 'orthopaedic doctor'
+    ))
+    list_appointments = any(x in low for x in (
+        'my appointments', 'show appointments', 'list appointments',
+        'upcoming appointment', 'appointment status'
+    ))
+    cancel_intent = 'cancel' in low and 'appointment' in low
+    price_intent = any(x in low for x in (
+        'price list', 'service prices', 'hospital charges', 'consultation fee',
+        'test price', 'show prices', 'show fees', 'rate list'
+    ))
+    medicine_intent = any(x in low for x in ('medicine', 'medicines', 'pharmacy', 'stock', 'price of'))
+    bill_intent = any(x in low for x in ('my bill', 'my bills', 'show bills', 'billing status', 'unpaid bill', 'invoice'))
+    create_bill_intent = re.search(r'\b(create|generate|add)\s+(?:a\s+)?bill\b', low)
+
     with db() as c:
-        doctors=[dict(x) for x in c.execute('SELECT * FROM doctors WHERE active=1 ORDER BY name').fetchall()]
-        if session.get('chat_booking') or any(w in low for w in ('book appointment','book an appointment','schedule appointment','make appointment','appointment with')):
-            pending=session.get('chat_booking',{})
-            # Resolve a doctor by exact name, or by a unique department mention.
-            selected=None
-            for doc in doctors:
-                if doc['name'].lower() in low or doc['department'].lower() in low:
-                    selected=doc; break
-            if not selected and pending.get('doctor_id'):
-                selected=next((d for d in doctors if d['id']==pending['doctor_id']),None)
-            day=_parse_chat_date(q) or pending.get('appointment_date')
-            slot=_parse_chat_time(q) or pending.get('appointment_time')
-            reason=pending.get('reason','')
-            if not reason:
-                rm=re.search(r'(?:for|reason(?: is)?|because)\s+(.+)$',q,re.I)
-                if rm: reason=rm.group(1).strip()[:300]
-            pending={'doctor_id':selected['id'] if selected else None,'appointment_date':day,'appointment_time':slot,'reason':reason}
-            missing=[]
-            if not selected: missing.append('doctor or department')
-            if not day: missing.append('date (for example, tomorrow or 2026-11-15)')
-            if not slot: missing.append('time (for example, 10:30 AM)')
-            if missing:
-                session['chat_booking']=pending
-                doctor_lines='; '.join(f"{d['name']} ({d['department']}, {d['days']} {d['start_time']}-{d['end_time']})" for d in doctors)
-                return {'answer':f"I can book that. I still need: {', '.join(missing)}. Available doctors: {doctor_lines}. You can send the details in one message or across multiple messages."}
-            try:
-                appt_day=date.fromisoformat(day)
-                datetime.strptime(slot,'%H:%M')
-            except Exception:
-                session['chat_booking']=pending
-                return {'answer':'I could not understand that date or time. Please provide a date such as 2026-11-15 and a time such as 10:30 AM.'}
-            if appt_day < date.today():
-                session['chat_booking']=pending
-                return {'answer':'That date is in the past. Please give me a future date.'}
-            doc=next((d for d in doctors if d['id']==pending['doctor_id']),None)
-            weekday=appt_day.strftime('%a'); schedule=doc['days']
-            if '-' in schedule:
-                week=['Mon','Tue','Wed','Thu','Fri','Sat','Sun']; first,last=schedule.split('-',1)
-                allowed=week[week.index(first):week.index(last)+1] if first in week and last in week else []
-            else: allowed=[x.strip() for x in schedule.split(',')]
-            if weekday not in allowed:
-                session['chat_booking']=pending
-                return {'answer':f"{doc['name']} is not scheduled on {weekday}. Their listed days are {doc['days']}. Please choose another date."}
-            if not (doc['start_time'] <= slot < doc['end_time']):
-                session['chat_booking']=pending
-                return {'answer':f"{doc['name']}'s listed hours are {doc['start_time']} to {doc['end_time']}. Please choose a time within those hours."}
-            try:
-                c.execute('INSERT INTO appointments(patient_id,doctor_id,appointment_date,appointment_time,reason) VALUES(?,?,?,?,?)',(user['id'],doc['id'],day,slot,reason))
-            except sqlite3.IntegrityError:
-                session['chat_booking']=pending
-                return {'answer':'That doctor already has an appointment at that time. Please choose another time.'}
-            appointment_id=c.execute('SELECT last_insert_rowid()').fetchone()[0]
-            session.pop('chat_booking',None)
-            return {'answer':f"Appointment booked successfully. Confirmation #{appointment_id}: {doc['name']} ({doc['department']}), {day} at {slot}. Consultation fee listed: ₹{doc['consultation_fee']:.2f}."}
+        doctors = [dict(x) for x in c.execute(
+            'SELECT * FROM doctors WHERE active=1 ORDER BY name'
+        ).fetchall()]
 
-        if any(w in low for w in ('my appointments','show appointments','list appointments','upcoming appointment','appointment status')):
-            rows=c.execute("""SELECT a.id,a.appointment_date,a.appointment_time,a.status,a.reason,d.name doctor_name,d.department FROM appointments a JOIN doctors d ON d.id=a.doctor_id WHERE a.patient_id=? ORDER BY a.appointment_date,a.appointment_time LIMIT 20""",(user['id'],)).fetchall()
-            if not rows: return {'answer':'You do not have any appointments on record.'}
-            return {'answer':'Your appointments:\n'+'\n'.join(f"#{r['id']} — {r['doctor_name']} ({r['department']}), {r['appointment_date']} at {r['appointment_time']} — {r['status']}" for r in rows)}
+        # Explicit non-booking commands must take priority over an unfinished booking.
+        if list_doctors:
+            return {'answer': 'Medical staff and schedules:\n' + '\n'.join(
+                f"{d['name']} — {d['department']}; {d['days']}, {d['start_time']}-{d['end_time']}; consultation fee ₹{d['consultation_fee']:.2f}"
+                for d in doctors
+            )}
 
-        if 'cancel' in low and 'appointment' in low:
-            m=re.search(r'(?:#|appointment\s*)(\d+)',low)
-            if not m: return {'answer':'Tell me the appointment confirmation number to cancel. You can find it by asking “show my appointments”.'}
-            appt_id=int(m.group(1)); row=c.execute('SELECT * FROM appointments WHERE id=?',(appt_id,)).fetchone()
-            if not row or (user['role']=='patient' and row['patient_id']!=user['id']): return {'answer':'I could not find an appointment with that number in your account.'}
-            if user['role'] not in ('patient','admin','reception'): return {'answer':'Your account is not permitted to cancel appointments.'}
-            if row['status']!='Booked': return {'answer':f"Appointment #{appt_id} is already {row['status'].lower()}."}
-            c.execute("UPDATE appointments SET status='Cancelled' WHERE id=?",(appt_id,))
-            return {'answer':f'Appointment #{appt_id} has been cancelled.'}
+        if list_appointments:
+            rows = c.execute("""SELECT a.id,a.appointment_date,a.appointment_time,a.status,a.reason,
+                d.name doctor_name,d.department FROM appointments a
+                JOIN doctors d ON d.id=a.doctor_id WHERE a.patient_id=?
+                ORDER BY a.appointment_date,a.appointment_time LIMIT 20""", (user['id'],)).fetchall()
+            if not rows:
+                return {'answer': 'You do not have any appointments on record.'}
+            return {'answer': 'Your appointments:\n' + '\n'.join(
+                f"#{r['id']} — {r['doctor_name']} ({r['department']}), {r['appointment_date']} at {r['appointment_time']} — {r['status']}"
+                for r in rows
+            )}
 
-        if any(w in low for w in ('doctor availability','available doctors','which doctors','doctors available','list doctors')):
-            return {'answer':'Available medical staff:\n'+'\n'.join(f"{d['name']} — {d['department']}; {d['days']}, {d['start_time']}-{d['end_time']}; fee ₹{d['consultation_fee']:.2f}" for d in doctors)}
+        if cancel_intent:
+            m = re.search(r'(?:#|appointment\s*)(\d+)', low)
+            if not m:
+                return {'answer': 'Tell me the appointment confirmation number to cancel. Ask “show my appointments” to see the numbers.'}
+            appt_id = int(m.group(1))
+            row = c.execute('SELECT * FROM appointments WHERE id=?', (appt_id,)).fetchone()
+            if not row or (user['role'] == 'patient' and row['patient_id'] != user['id']):
+                return {'answer': 'I could not find that appointment in your account.'}
+            if user['role'] not in ('patient', 'admin', 'reception'):
+                return {'answer': 'Your account is not permitted to cancel appointments.'}
+            if row['status'] != 'Booked':
+                return {'answer': f"Appointment #{appt_id} is already {row['status'].lower()}."}
+            c.execute("UPDATE appointments SET status='Cancelled' WHERE id=?", (appt_id,))
+            session.pop('chat_booking', None)
+            return {'answer': f'Appointment #{appt_id} has been cancelled.'}
 
-        if any(term in low for term in ('price list','price list','service prices','hospital charges','consultation fee','test price','show prices','show fees','rate list')):
-            services=c.execute('SELECT name,department,price FROM hospital_services WHERE active=1 ORDER BY department,name').fetchall()
-            doctor_fees=c.execute('SELECT name,department,consultation_fee FROM doctors WHERE active=1 ORDER BY department,name').fetchall()
-            lines=['Hospital service price list (demonstration rates):']
+        if price_intent:
+            services = c.execute('SELECT name,department,price FROM hospital_services WHERE active=1 ORDER BY department,name').fetchall()
+            doctor_fees = c.execute('SELECT name,department,consultation_fee FROM doctors WHERE active=1 ORDER BY department,name').fetchall()
+            lines = ['Hospital service price list (demonstration rates):']
             lines.extend(f"{r['name']} ({r['department']}) — ₹{r['price']:.2f}" for r in services)
             lines.append('Doctor consultation fees:')
             lines.extend(f"{r['name']} ({r['department']}) — ₹{r['consultation_fee']:.2f}" for r in doctor_fees)
-            lines.append('Medicine prices are listed in the Pharmacy section. Confirm all charges with reception before payment.')
-            return {'answer':'\n'.join(lines)}
+            lines.append('Medicine prices are available in the Pharmacy section. Confirm charges with reception before payment.')
+            return {'answer': '\n'.join(lines)}
 
-        if any(w in low for w in ('medicine','medicines','pharmacy','stock','price of')):
-            term=re.sub(r'\b(medicine|medicines|pharmacy|stock|price|prices|of|do|you|have|search|find|show|list|and)\b','',low).strip(' ?.,')
-            rows=c.execute('SELECT name,strength,price,stock FROM medicines WHERE name LIKE ? ORDER BY name LIMIT 15',(f'%{term}%',)).fetchall() if term else c.execute('SELECT name,strength,price,stock FROM medicines ORDER BY name LIMIT 15').fetchall()
-            if not rows: return {'answer':'No matching item was found in the demonstration pharmacy catalogue.'}
-            return {'answer':'Catalogue results (demonstration data):\n'+'\n'.join(f"{r['name']} {r['strength']} — ₹{r['price']:.2f}; stock shown: {r['stock']}" for r in rows)}
+        if medicine_intent:
+            term = re.sub(r'\b(medicine|medicines|pharmacy|stock|price|prices|of|do|you|have|search|find|show|list|and)\b', '', low).strip(' ?.,')
+            rows = c.execute(
+                'SELECT name,strength,price,stock FROM medicines WHERE name LIKE ? ORDER BY name LIMIT 15',
+                (f'%{term}%',)
+            ).fetchall() if term else c.execute(
+                'SELECT name,strength,price,stock FROM medicines ORDER BY name LIMIT 15'
+            ).fetchall()
+            if not rows:
+                return {'answer': 'No matching item was found in the demonstration pharmacy catalogue.'}
+            return {'answer': 'Pharmacy catalogue (demonstration data):\n' + '\n'.join(
+                f"{r['name']} {r['strength']} — ₹{r['price']:.2f}; stock shown: {r['stock']}"
+                for r in rows
+            )}
 
-        if re.search(r'\b(create|generate|add)\s+(?:a\s+)?bill\b', low):
-            if user['role'] not in ('admin','reception'):
-                return {'answer':'Only reception or admin accounts can create invoices. I can still show your existing bills if you ask “show my bills”.'}
-            patient_match=re.search(r'patient\s*(?:id)?\s*#?([0-9]+)',low)
-            amount_match=re.search(r'amount\s*(?:₹|rs\.?\s*)?([0-9]+(?:\.[0-9]{1,2})?)',low)
-            desc_match=re.search(r'description\s+(.+)$',q,re.I)
+        if create_bill_intent:
+            if user['role'] not in ('admin', 'reception'):
+                return {'answer': 'Only reception or admin accounts can create invoices. You can ask “show my bills” to view your own bills.'}
+            patient_match = re.search(r'patient\s*(?:id)?\s*#?([0-9]+)', low)
+            amount_match = re.search(r'amount\s*(?:₹|rs\.?\s*)?([0-9]+(?:\.[0-9]{1,2})?)', low)
+            desc_match = re.search(r'description\s+(.+)$', q, re.I)
             if not patient_match or not amount_match:
-                return {'answer':'To create an invoice, send: “create bill for patient ID 5 amount 750 description consultation”.'}
-            patient_id=int(patient_match.group(1)); amount=float(amount_match.group(1)); description=(desc_match.group(1).strip() if desc_match else 'Hospital service')[:200]
-            if amount < 0 or not c.execute('SELECT 1 FROM users WHERE id=? AND role="patient"',(patient_id,)).fetchone():
-                return {'answer':'I could not verify that patient ID or amount. Check the patient ID and try again.'}
-            c.execute('INSERT INTO bills(patient_id,description,amount) VALUES(?,?,?)',(patient_id,description,amount))
-            bill_id=c.execute('SELECT last_insert_rowid()').fetchone()[0]
-            return {'answer':f'Invoice #{bill_id} created for patient ID {patient_id}: {description}, ₹{amount:.2f}. Status: Unpaid.'}
+                return {'answer': 'To create an invoice, send: “create bill for patient ID 5 amount 750 description consultation”.'}
+            patient_id = int(patient_match.group(1))
+            amount = float(amount_match.group(1))
+            description = (desc_match.group(1).strip() if desc_match else 'Hospital service')[:200]
+            if amount <= 0 or not c.execute('SELECT 1 FROM users WHERE id=? AND role="patient"', (patient_id,)).fetchone():
+                return {'answer': 'I could not verify that patient ID or amount. Check the patient ID and enter an amount greater than zero.'}
+            c.execute('INSERT INTO bills(patient_id,description,amount) VALUES(?,?,?)', (patient_id, description, amount))
+            bill_id = c.execute('SELECT last_insert_rowid()').fetchone()[0]
+            return {'answer': f'Invoice #{bill_id} created for patient ID {patient_id}: {description}, ₹{amount:.2f}. Status: Unpaid.'}
 
-        if any(w in low for w in ('my bill','my bills','show bills','show my bill','billing status','unpaid bill','invoice')):
-            rows=c.execute('SELECT description,amount,status,created_at FROM bills WHERE patient_id=? ORDER BY id DESC LIMIT 20',(user['id'],)).fetchall()
-            if not rows: return {'answer':'There are no bills on your account.'}
-            return {'answer':'Your billing records:\n'+'\n'.join(f"{r['description']} — ₹{r['amount']:.2f} — {r['status']} ({r['created_at']})" for r in rows)}
+        if bill_intent:
+            rows = c.execute(
+                'SELECT description,amount,status,created_at FROM bills WHERE patient_id=? ORDER BY id DESC LIMIT 20',
+                (user['id'],)
+            ).fetchall()
+            if not rows:
+                return {'answer': 'There are no bills on your account.'}
+            return {'answer': 'Your billing records:\n' + '\n'.join(
+                f"{r['description']} — ₹{r['amount']:.2f} — {r['status']} ({r['created_at']})"
+                for r in rows
+            )}
+
+        # A pending booking is continued only by a booking request or a plausible
+        # missing detail. Generic greetings/questions no longer get trapped in it.
+        pending = session.get('chat_booking')
+        is_detail_reply = bool(pending) and (
+            _parse_chat_date(q) or _parse_chat_time(q) or
+            any(x in low for x in ('dr.', 'doctor', 'cardiologist', 'cardiology',
+                                   'dermatologist', 'dermatology', 'orthopedic',
+                                   'orthopaedic', 'general medicine', 'reason is'))
+        )
+        if not booking_words and not is_detail_reply:
+            if pending:
+                session.pop('chat_booking', None)
+
+        if booking_words or is_detail_reply:
+            if user['role'] != 'patient':
+                return {'answer': 'Appointment booking through the patient assistant is available to patient accounts. Staff can manage appointments in the Appointments section.'}
+
+            pending = session.get('chat_booking', {})
+            selected = None
+            department_aliases = {
+                'cardiologist': 'cardiology', 'heart doctor': 'cardiology',
+                'dermatologist': 'dermatology', 'skin doctor': 'dermatology',
+                'orthopedic': 'orthopedics', 'orthopaedic': 'orthopedics',
+                'bone doctor': 'orthopedics', 'general physician': 'general medicine',
+                'physician': 'general medicine'
+            }
+            normalized = low
+            for alias, dept in department_aliases.items():
+                if alias in normalized:
+                    normalized += ' ' + dept
+            for doc in doctors:
+                if doc['name'].lower() in normalized or doc['department'].lower() in normalized:
+                    selected = doc
+                    break
+            if not selected and pending.get('doctor_id'):
+                selected = next((d for d in doctors if d['id'] == pending['doctor_id']), None)
+
+            day = _parse_chat_date(q) or pending.get('appointment_date')
+            slot = _parse_chat_time(q) or pending.get('appointment_time')
+            reason = pending.get('reason', '')
+            if not reason:
+                rm = re.search(r'(?:for|reason(?: is)?|because)\s+(.+)$', q, re.I)
+                if rm and not re.search(r'\b(appointment|consultation)\b', rm.group(1), re.I):
+                    reason = rm.group(1).strip()[:300]
+
+            pending = {
+                'doctor_id': selected['id'] if selected else pending.get('doctor_id'),
+                'appointment_date': day,
+                'appointment_time': slot,
+                'reason': reason
+            }
+            selected = next((d for d in doctors if d['id'] == pending['doctor_id']), None)
+            missing = []
+            if not selected: missing.append('doctor or department')
+            if not day: missing.append('date (for example, tomorrow)')
+            if not slot: missing.append('time (for example, 10:30 AM)')
+            if missing:
+                session['chat_booking'] = pending
+                doctor_lines = '; '.join(
+                    f"{d['name']} ({d['department']}, {d['days']} {d['start_time']}-{d['end_time']})"
+                    for d in doctors
+                )
+                return {'answer': f"I can book your appointment. I still need: {', '.join(missing)}. Available doctors: {doctor_lines}. Send the missing details in your next message."}
+
+            try:
+                appt_day = date.fromisoformat(day)
+                datetime.strptime(slot, '%H:%M')
+            except Exception:
+                session['chat_booking'] = pending
+                return {'answer': 'I could not understand the date or time. Please provide a date such as 2026-11-15 and a time such as 10:30 AM.'}
+            if appt_day <= date.today():
+                session['chat_booking'] = pending
+                return {'answer': 'Please choose a future date. Same-day booking is not enabled in this demonstration schedule.'}
+
+            doc = selected
+            weekday = appt_day.strftime('%a')
+            schedule = doc['days']
+            if '-' in schedule:
+                week = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+                first, last = schedule.split('-', 1)
+                allowed = week[week.index(first):week.index(last)+1] if first in week and last in week else []
+            else:
+                allowed = [x.strip() for x in schedule.split(',')]
+            if weekday not in allowed:
+                session['chat_booking'] = pending
+                return {'answer': f"{doc['name']} is not scheduled on {weekday}. Their listed days are {doc['days']}. Please choose another date."}
+            if not (doc['start_time'] <= slot < doc['end_time']):
+                session['chat_booking'] = pending
+                return {'answer': f"{doc['name']}'s listed hours are {doc['start_time']} to {doc['end_time']}. Please choose a time within those hours."}
+            try:
+                c.execute(
+                    'INSERT INTO appointments(patient_id,doctor_id,appointment_date,appointment_time,reason) VALUES(?,?,?,?,?)',
+                    (user['id'], doc['id'], day, slot, reason)
+                )
+            except sqlite3.IntegrityError:
+                session['chat_booking'] = pending
+                return {'answer': 'That doctor already has an appointment at that time. Please choose another time.'}
+            appointment_id = c.execute('SELECT last_insert_rowid()').fetchone()[0]
+            session.pop('chat_booking', None)
+            return {'answer': f"Appointment booked successfully. Confirmation #{appointment_id}: {doc['name']} ({doc['department']}), {day} at {slot}. Consultation fee listed: ₹{doc['consultation_fee']:.2f}."}
+
     return None
 
 
