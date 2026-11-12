@@ -18,7 +18,7 @@ $('#reload-prices')?.addEventListener('click',()=>loadPriceList().catch(notify))
 async function loadAnalytics(){const d=await api('/api/analytics');$('#analytics-summary').innerHTML=[['Total chatbot queries',d.total_queries],['Appointments',d.appointments],['Registered patients',d.patients],['Unpaid bill total',money(d.unpaid_total)]].map(x=>`<article><span>${x[0]}</span><strong>${x[1]}</strong></article>`).join('');$('#topic-list').innerHTML=d.topics.map(x=>`<article><b>${esc(x.label)}</b><strong>${x.count}</strong></article>`).join('')||'<p>No query data yet.</p>';$('#category-list').innerHTML=d.categories.map(x=>`<article><b>${esc(x.label)}</b><strong>${x.count}</strong></article>`).join('')||'<p>No classifications yet.</p>'}
 function loadTab(id){const map={doctors:loadDoctors,appointments:loadAppointments,billing:loadBills,records:loadRecords,medicines:loadMedicines,analytics:loadAnalytics,history:loadChatHistory,assistant:loadPriceList};if(map[id])map[id]().catch(notify)}
 
-// Executive dashboard enhancements: live KPIs, workspace search, theme and print controls.
+// Executive dashboard enhancements: live KPIs, workspace search and theme controls.
 async function loadDashboardMetrics(){
   try{const requests=[api('/api/appointments'),api('/api/doctors')];if(['admin','reception','patient'].includes(window.HOSPITAL_ROLE))requests.push(api('/api/bills'));const [a,d,b]=await Promise.all(requests);
     const ka=$('#kpi-appointments'),kd=$('#kpi-doctors');if(ka)ka.textContent=a.appointments.length;if(kd)kd.textContent=d.doctors.length;
@@ -30,7 +30,7 @@ $('#appointment-filter')?.addEventListener('change',()=>{const rows=window.appoi
 $('#global-search')?.addEventListener('input',e=>{const q=e.target.value.trim().toLowerCase();document.querySelectorAll('.panel').forEach(panel=>{panel.querySelectorAll('.list article,.cards article,.overview-card').forEach(item=>{item.hidden=!!q&&!item.textContent.toLowerCase().includes(q)})})});
 $('#theme-toggle')?.addEventListener('click',()=>{document.body.classList.toggle('dark-mode');try{localStorage.setItem('greenfield-theme',document.body.classList.contains('dark-mode')?'dark':'light')}catch(_){}});
 try{if(localStorage.getItem('greenfield-theme')==='dark')document.body.classList.add('dark-mode')}catch(_){}
-$('#print-dashboard')?.addEventListener('click',()=>window.print());
+
 function updateClock(){const el=$('#live-clock');if(el)el.textContent=new Intl.DateTimeFormat(undefined,{weekday:'short',month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date())}
 updateClock();setInterval(updateClock,30000);
 const dateInput=$('#appointment_date');if(dateInput)dateInput.min=new Date().toISOString().slice(0,10);
