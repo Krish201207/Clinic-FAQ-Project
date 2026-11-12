@@ -30,7 +30,7 @@ $('#appointment-filter')?.addEventListener('change',()=>{const rows=window.appoi
 $('#global-search')?.addEventListener('input',e=>{const q=e.target.value.trim().toLowerCase();document.querySelectorAll('.panel').forEach(panel=>{panel.querySelectorAll('.list article,.cards article,.overview-card').forEach(item=>{item.hidden=!!q&&!item.textContent.toLowerCase().includes(q)})})});
 $('#theme-toggle')?.addEventListener('click',()=>{document.body.classList.toggle('dark-mode');try{localStorage.setItem('greenfield-theme',document.body.classList.contains('dark-mode')?'dark':'light')}catch(_){}});
 try{if(localStorage.getItem('greenfield-theme')==='dark')document.body.classList.add('dark-mode')}catch(_){}
-$('#print-dashboard')?.addEventListener('click',()=>window.print());
+
 function updateClock(){const el=$('#live-clock');if(el)el.textContent=new Intl.DateTimeFormat(undefined,{weekday:'short',month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date())}
 updateClock();setInterval(updateClock,30000);
 const dateInput=$('#appointment_date');if(dateInput)dateInput.min=new Date().toISOString().slice(0,10);
