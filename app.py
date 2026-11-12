@@ -7,14 +7,60 @@ from werkzeug.utils import secure_filename
 from flask import Flask, jsonify, request, render_template, redirect, url_for, session, flash, send_file
 
 BASE = Path(__file__).resolve().parent
-DB_PATH = Path(os.getenv('HOSPITAL_DB_PATH', str(BASE / 'hospital.db')))
-UPLOAD_DIR = BASE / 'uploads'
-UPLOAD_DIR.mkdir(exist_ok=True)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(BASE / '.env')
+except ImportError:
+    pass
+INSTANCE_DIR = BASE / 'instance'
+INSTANCE_DIR.mkdir(parents=True, exist_ok=True)
+
+# Local development gets a generated key persisted outside source control. On hosted
+# deployments, set SECRET_KEY in the host's environment settings and keep it stable.
+def load_secret_key():
+    configured = os.getenv('SECRET_KEY', '').strip()
+    if configured:
+        if len(configured) < 32:
+            raise RuntimeError('SECRET_KEY must contain at least 32 characters.')
+        return configured
+    key_file = INSTANCE_DIR / '.secret_key'
+    try:
+        if key_file.exists():
+            key = key_file.read_text(encoding='utf-8').strip()
+            if len(key) >= 32:
+                return key
+            raise RuntimeError('The saved instance/.secret_key is invalid. Restore it or set SECRET_KEY.')
+        key = uuid.uuid4().hex + uuid.uuid4().hex
+        # Exclusive creation prevents two first-start workers from generating competing keys.
+        try:
+            fd = os.open(str(key_file), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            key = key_file.read_text(encoding='utf-8').strip()
+            if len(key) < 32:
+                raise RuntimeError('The saved instance/.secret_key is invalid. Set SECRET_KEY.')
+            return key
+        with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+            handle.write(key)
+        return key
+    except OSError as exc:
+        raise RuntimeError('Cannot persist Flask secret key. Set SECRET_KEY in environment.') from exc
+
+DB_PATH = Path(os.getenv('HOSPITAL_DB_PATH', str(BASE / 'hospital.db'))).expanduser().resolve()
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+UPLOAD_DIR = Path(os.getenv('HOSPITAL_UPLOAD_DIR', str(BASE / 'uploads'))).expanduser().resolve()
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 ALLOWED_EXTENSIONS = {'pdf', 'png', 'jpg', 'jpeg'}
 app = Flask(__name__)
-# Keep SECRET_KEY identical across workers and restarts. Set a long random value in production.
-app.secret_key = os.getenv('SECRET_KEY', 'dev-only-change-this-secret-before-deployment')
-app.config.update(MAX_CONTENT_LENGTH=8 * 1024 * 1024, SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Lax', SESSION_COOKIE_SECURE=os.getenv('COOKIE_SECURE', '0') == '1', SESSION_REFRESH_EACH_REQUEST=True)
+app.secret_key = load_secret_key()
+app.config.update(
+    MAX_CONTENT_LENGTH=8 * 1024 * 1024,
+    SESSION_COOKIE_NAME='greenfield_session',
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    SESSION_COOKIE_SECURE=os.getenv('COOKIE_SECURE', '0').lower() in ('1', 'true', 'yes'),
+    PERMANENT_SESSION_LIFETIME=timedelta(days=14),
+    SESSION_REFRESH_EACH_REQUEST=True,
+)
 
 # Optional existing project components. The hospital modules still work if either is absent.
 try:
@@ -36,14 +82,16 @@ FAQ_PATH = BASE / 'FQA.txt'
 
 
 def db():
-    con = sqlite3.connect(DB_PATH, timeout=20)
+    con = sqlite3.connect(str(DB_PATH), timeout=30)
     con.row_factory = sqlite3.Row
     con.execute('PRAGMA foreign_keys=ON')
+    con.execute('PRAGMA busy_timeout=30000')
     return con
 
 
 def init_db():
     with db() as c:
+        c.execute('PRAGMA journal_mode=WAL')
         c.executescript('''
         CREATE TABLE IF NOT EXISTS users(
           id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT UNIQUE NOT NULL,
@@ -166,31 +214,59 @@ def topic_for(question):
 @login_required
 def dashboard(): return render_template('dashboard.html', user=current_user(), gemini_ready=GEMINI is not None)
 
-@app.route('/login',methods=['GET','POST'])
+@app.route('/login', methods=['GET', 'POST'])
 def login():
-    if request.method=='POST':
-        email=request.form.get('email','').strip().lower(); pw=request.form.get('password','')
-        with db() as c: user=c.execute('SELECT * FROM users WHERE email=?',(email,)).fetchone()
-        if user and check_password_hash(user['password_hash'],pw):
-            session.clear(); session['user_id']=user['id']; return redirect(url_for('dashboard'))
-        flash('Email or password is incorrect.','error')
+    if current_user():
+        return redirect(url_for('dashboard'))
+    if request.method == 'POST':
+        email = request.form.get('email', '').strip().lower()
+        password = request.form.get('password', '')
+        with db() as c:
+            user = c.execute('SELECT * FROM users WHERE email=?', (email,)).fetchone()
+        valid = False
+        if user:
+            try:
+                valid = check_password_hash(user['password_hash'], password)
+            except (ValueError, TypeError):
+                valid = False
+        if valid:
+            session.clear()
+            session.permanent = True
+            session['user_id'] = user['id']
+            session['login_nonce'] = uuid.uuid4().hex
+            target = request.args.get('next', '')
+            # Only allow a local path to prevent open redirects.
+            if target.startswith('/') and not target.startswith('//'):
+                return redirect(target)
+            return redirect(url_for('dashboard'))
+        flash('Email or password is incorrect.', 'error')
     return render_template('login.html')
 
-@app.route('/register',methods=['GET','POST'])
+@app.route('/register', methods=['GET', 'POST'])
 def register():
-    if request.method=='POST':
-        name=request.form.get('name','').strip(); email=request.form.get('email','').strip().lower(); pw=request.form.get('password',''); phone=request.form.get('phone','').strip()
-        if not name or len(name)>100 or not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+',email) or len(pw)<8:
-            flash('Enter a name, valid email, and password with at least 8 characters.','error')
+    if request.method == 'POST':
+        name = request.form.get('name', '').strip()
+        email = request.form.get('email', '').strip().lower()
+        password = request.form.get('password', '')
+        if not name or len(name) > 100 or not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', email) or len(password) < 8:
+            flash('Enter your name, a valid email, and a password with at least 8 characters.', 'error')
         else:
             try:
-                with db() as c: c.execute('INSERT INTO users(name,email,password_hash,phone,role) VALUES(?,?,?,?,?)',(name,email,generate_password_hash(pw),phone,'patient'))
-                flash('Account created. Please sign in.','success'); return redirect(url_for('login'))
-            except sqlite3.IntegrityError: flash('That email is already registered.','error')
+                with db() as c:
+                    c.execute('INSERT INTO users(name,email,password_hash,role) VALUES(?,?,?,?)',
+                              (name, email, generate_password_hash(password), 'patient'))
+                flash('Account created. Please sign in.', 'success')
+                return redirect(url_for('login'))
+            except sqlite3.IntegrityError:
+                flash('That email is already registered.', 'error')
     return render_template('register.html')
 
 @app.get('/logout')
-def logout(): session.clear(); return redirect(url_for('login'))
+def logout():
+    session.clear()
+    response = redirect(url_for('login'))
+    response.delete_cookie(app.config['SESSION_COOKIE_NAME'], path='/')
+    return response
 
 @app.get('/history')
 @login_required
@@ -291,6 +367,8 @@ def add_medicine():
 @login_required
 def bills():
     u=current_user()
+    if u['role'] == 'doctor':
+        return jsonify(error='Billing access is not available for doctor accounts.'), 403
     with db() as c:
         sql='SELECT b.*,u.name patient_name FROM bills b JOIN users u ON u.id=b.patient_id'
         rows=c.execute(sql+' WHERE b.patient_id=? ORDER BY b.id DESC',(u['id'],)).fetchall() if u['role']=='patient' else c.execute(sql+' ORDER BY b.id DESC LIMIT 300').fetchall()
@@ -544,7 +622,7 @@ def ask():
 
 @app.get('/health')
 def health():
-    return jsonify(ok=True,gemini_configured=GEMINI is not None,classifier_loaded=CLASSIFIER is not None,database=str(DB_PATH))
+    return jsonify(ok=True, gemini_configured=GEMINI is not None, classifier_loaded=CLASSIFIER is not None, database=str(DB_PATH), database_exists=DB_PATH.exists(), secret_key_configured=bool(os.getenv('SECRET_KEY'))) 
 
 @app.errorhandler(413)
 def too_large(_): return jsonify(error='Upload is too large. Maximum size is 8 MB.'),413
