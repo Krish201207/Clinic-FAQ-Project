@@ -545,19 +545,65 @@ def download_report():
     return send_file(data, mimetype='text/csv; charset=utf-8', as_attachment=True, download_name='hospital_report.csv')
 
 def _parse_chat_date(text):
-    q=text.lower()
-    if 'day after tomorrow' in q: return (date.today()+timedelta(days=2)).isoformat()
-    if 'tomorrow' in q: return (date.today()+timedelta(days=1)).isoformat()
-    if 'today' in q: return date.today().isoformat()
-    m=re.search(r'\b(20\d{2}-\d{2}-\d{2})\b', q)
+    q = text.lower()
+    today = date.today()
+    if 'day after tomorrow' in q:
+        return (today + timedelta(days=2)).isoformat()
+    if 'tomorrow' in q:
+        return (today + timedelta(days=1)).isoformat()
+    if 'today' in q:
+        return today.isoformat()
+
+    # Understand weekday descriptions such as "Friday", "this Friday",
+    # and "next Monday" instead of requiring a numeric date.
+    weekdays = {'monday': 0, 'tuesday': 1, 'wednesday': 2, 'thursday': 3,
+                'friday': 4, 'saturday': 5, 'sunday': 6}
+    weekday_match = re.search(r'\b(?:this|next)?\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b', q)
+    if weekday_match:
+        target = weekdays[weekday_match.group(1)]
+        delta = (target - today.weekday()) % 7
+        if delta == 0:
+            delta = 7
+        if re.search(r'\bnext\s+' + weekday_match.group(1) + r'\b', q):
+            delta = delta if delta > 0 else 7
+            if delta < 7:
+                delta += 7
+        return (today + timedelta(days=delta)).isoformat()
+
+    m = re.search(r'\b(20\d{2}-\d{2}-\d{2})\b', q)
     if m:
-        try: return date.fromisoformat(m.group(1)).isoformat()
-        except ValueError: return None
-    m=re.search(r'\b(\d{1,2})[/-](\d{1,2})(?:[/-](20\d{2}))?\b', q)
+        try:
+            return date.fromisoformat(m.group(1)).isoformat()
+        except ValueError:
+            return None
+    m = re.search(r'\b(\d{1,2})[/-](\d{1,2})(?:[/-](20\d{2}))?\b', q)
     if m:
-        try: return date(int(m.group(3) or date.today().year),int(m.group(2)),int(m.group(1))).isoformat()
-        except ValueError: return None
+        try:
+            return date(int(m.group(3) or today.year), int(m.group(2)), int(m.group(1))).isoformat()
+        except ValueError:
+            return None
     return None
+
+
+def _looks_like_booking_request(text):
+    q = re.sub(r'[^a-z0-9]+', ' ', text.lower()).strip()
+    patterns = (
+        r'\b(book|booking|schedule|reserve)\b.*\b(appointment|visit|consultation|doctor|physician|specialist)\b',
+        r'\b(appointment|visit|consultation)\b.*\b(book|schedule|reserve|with)\b',
+        r'\b(appointment|consultation)\s+with\b',
+        r'\b(see|visit|consult|meet|talk to)\s+(a|an|the|my)?\s*(doctor|physician|specialist|cardiologist|dermatologist|orthopedic|orthopaedic)\b',
+        r'\b(i|we)\s+(need|want|would like|wish)\s+to\s+(see|visit|consult|meet|talk to)\b',
+        r'\b(can|could)\s+i\s+(see|visit|consult|meet|get)\b.*\b(doctor|physician|specialist|checked|checkup)\b',
+        r'\b(get|have)\s+(a\s+)?(checkup|check up|consultation|appointment)\b',
+        r'\b(i am|i m|i have|i ve got|my)\b.*\b(pain|ache|hurts|fever|cough|rash|sick|unwell|dizzy)\b.*\b(doctor|appointment|consult|checked|checkup)\b',
+        r'\b(i need|i want|i would like)\b.*\b(doctor|specialist|medical advice|checkup|check up)\b',
+    )
+    return any(re.search(pattern, q) for pattern in patterns)
+
+
+def _extract_visit_reason(text):
+    q = text.strip()
+    match = re.search(r'\b(?:because|reason(?: is)?|for|about|regarding)\s+(.+)
 
 
 def _parse_chat_time(text):
@@ -576,14 +622,7 @@ def _parse_chat_time(text):
 def _chat_action(question, user):
     q = question.strip()
     low = q.lower()
-    booking_words = re.search(
-        r'\b(book|booking|schedule|reserve|make|set up)\b.*\b(appointment|visit|consultation)\b'
-        r'|\b(appointment|visit|consultation)\b.*\b(book|schedule|reserve|with)\b'
-        r'|\b(appointment|consultation)\s+with\s+'
-        r'|\b(see|visit|consult)\s+(?:a\s+)?(?:doctor|cardiologist|dermatologist|orthopedic|orthopaedic|physician)\b'
-        r'|\b(book|schedule|reserve)\s+(?:me\s+)?(?:with\s+)?(?:dr\.?\s+|doctor\s+)?[a-z][a-z .-]{2,50}\b',
-        low
-    )
+    booking_words = _looks_like_booking_request(q)
     list_doctors = any(x in low for x in (
         'doctor names', 'list doctors', 'show doctors', 'available doctors',
         'doctor availability', 'which doctors', 'medical staff', 'cardiologist',
@@ -696,19 +735,33 @@ def _chat_action(question, user):
                 for r in rows
             )}
 
-        # A pending booking is continued only by a booking request or a plausible
-        # missing detail. Generic greetings/questions no longer get trapped in it.
+        # Continue an in-progress booking when the patient supplies a doctor,
+        # date, time, or visit reason in a separate message. Ignore greetings and
+        # unrelated questions so the booking state does not swallow normal chat.
         pending = session.get('chat_booking')
-        is_detail_reply = bool(pending) and (
-            _parse_chat_date(q) or _parse_chat_time(q) or
-            any(x in low for x in ('dr.', 'doctor', 'cardiologist', 'cardiology',
-                                   'dermatologist', 'dermatology', 'orthopedic',
-                                   'orthopaedic', 'general medicine', 'reason is')) or
-            any(d['name'].lower() in low for d in doctors)
-        )
-        if not booking_words and not is_detail_reply:
-            if pending:
-                session.pop('chat_booking', None)
+        is_detail_reply = False
+        if pending:
+            detail_words = (
+                'dr.', 'doctor', 'cardiologist', 'cardiology', 'heart',
+                'dermatologist', 'dermatology', 'skin', 'orthopedic',
+                'orthopaedic', 'bone', 'general medicine', 'physician',
+                'because', 'reason', 'pain', 'ache', 'fever', 'cough',
+                'rash', 'headache', 'back', 'stomach', 'sick', 'unwell'
+            )
+            is_detail_reply = bool(
+                _parse_chat_date(q) or _parse_chat_time(q) or
+                any(word in low for word in detail_words) or
+                any(doc['name'].lower() in low for doc in doctors)
+            )
+            if not is_detail_reply and len(q.split()) >= 3 and not re.search(
+                r'\b(hello|hi|hey|thanks|thank you|good morning|good evening)\b', low
+            ):
+                # When the assistant explicitly asked for the missing visit reason,
+                # accept a plain-language description such as "my knee has been hurting".
+                is_detail_reply = bool(pending.get('awaiting_reason'))
+
+        if not booking_words and not is_detail_reply and pending:
+            session.pop('chat_booking', None)
 
         if booking_words or is_detail_reply:
             if user['role'] != 'patient':
@@ -718,9 +771,9 @@ def _chat_action(question, user):
             selected = None
             department_aliases = {
                 'cardiologist': 'cardiology', 'heart doctor': 'cardiology',
-                'dermatologist': 'dermatology', 'skin doctor': 'dermatology',
+                'dermatologist': 'dermatology', 'skin doctor': 'dermatology',\n                'skin specialist': 'dermatology', 'skin': 'dermatology',
                 'orthopedic': 'orthopedics', 'orthopaedic': 'orthopedics',
-                'bone doctor': 'orthopedics', 'general physician': 'general medicine',
+                'bone doctor': 'orthopedics', 'bone specialist': 'orthopedics',\n                'general physician': 'general medicine', 'family doctor': 'general medicine',
                 'physician': 'general medicine'
             }
             normalized = low
@@ -738,9 +791,9 @@ def _chat_action(question, user):
             slot = _parse_chat_time(q) or pending.get('appointment_time')
             reason = pending.get('reason', '')
             if not reason:
-                rm = re.search(r'(?:for|reason(?: is)?|because)\s+(.+)$', q, re.I)
-                if rm and not re.search(r'\b(appointment|consultation)\b', rm.group(1), re.I):
-                    reason = rm.group(1).strip()[:300]
+                reason = _extract_visit_reason(q)
+            if not reason and pending.get('awaiting_reason') and not booking_words:
+                reason = q[:300]
 
             pending = {
                 'doctor_id': selected['id'] if selected else pending.get('doctor_id'),
@@ -751,15 +804,25 @@ def _chat_action(question, user):
             selected = next((d for d in doctors if d['id'] == pending['doctor_id']), None)
             missing = []
             if not selected: missing.append('doctor or department')
-            if not day: missing.append('date (for example, tomorrow)')
+            if not day: missing.append('date (for example, tomorrow or Friday)')
             if not slot: missing.append('time (for example, 10:30 AM)')
             if missing:
+                pending['awaiting_reason'] = not bool(reason)
                 session['chat_booking'] = pending
                 doctor_lines = '; '.join(
                     f"{d['name']} ({d['department']}, {d['days']} {d['start_time']}-{d['end_time']})"
                     for d in doctors
                 )
-                return {'answer': f"I can book your appointment. I still need: {', '.join(missing)}. Available doctors: {doctor_lines}. Send the missing details in your next message."}
+                prompts = []
+                if not selected: prompts.append('which doctor or specialty you prefer')
+                if not day: prompts.append('what day you want to come')
+                if not slot: prompts.append('what time you prefer')
+                if not reason: prompts.append('what you want the doctor to check')
+                return {'answer': (
+                    "Please provide " + '; '.join(prompts) +
+                    ". You can answer naturally, for example: “A skin doctor, next Friday, around 11 AM. I have a rash.” "
+                    "Available doctors: " + doctor_lines + "."
+                )}
 
             try:
                 appt_day = date.fromisoformat(day)
