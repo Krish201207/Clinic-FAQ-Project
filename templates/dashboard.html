@@ -33,23 +33,27 @@
     <section id="records" class="panel"><div class="section-title"><div><h2>Medical records</h2><p>Clinical notes and patient documents</p></div></div>{% if user.role in ['admin','doctor'] %}<form id="record-form" class="form-grid" enctype="multipart/form-data"><label>Patient ID<input name="patient_id" type="number" min="1" required></label><label>Record category<input name="record_type" placeholder="Lab report / Visit note" required></label><label class="wide">Clinical notes<textarea name="notes" rows="3"></textarea></label><label>Attachment (PDF/JPG/PNG)<input name="file" type="file" accept=".pdf,.png,.jpg,.jpeg"></label><button>Save medical record</button></form>{% endif %}<div id="records-list" class="list"></div></section>
     <section id="medicines" class="panel"><div class="section-title"><div><h2>Hospital pharmacy</h2><p>Search medicine catalogue, pricing, and sample stock</p></div></div><input id="medicine-search" placeholder="Search medicine or strength"><div id="medicines-list" class="list"></div>{% if user.role in ['admin','reception'] %}<h3>Add medicine to demo inventory</h3><form id="medicine-form" class="form-grid"><label>Medicine name<input id="med_name" required></label><label>Strength<input id="med_strength"></label><label>Price (₹)<input id="med_price" type="number" min="0" step="0.01" required></label><label>Stock quantity<input id="med_stock" type="number" min="0" required></label><button>Add to catalogue</button></form>{% endif %}<p class="note">Sample catalogue only. This is not a prescription or a live pharmacy inventory.</p></section>
     <section id="assistant" class="panel"><div class="section-title"><div><h2>Patient help desk</h2><p>Use the guided actions below or ask in your own words</p></div><button type="button" class="report-button" data-open-tab="history">View conversation history</button></div>
-      <div class="assistant-guide"><div><b>What would you like to do?</b><p>Choose an action to start. The assistant will ask for any missing details before submitting it.</p></div><div class="chat-examples">
-        <button type="button" data-chat-prompt="I want to book an appointment">＋ Book appointment</button>
-        <button type="button" data-chat-prompt="Show my appointments">▣ My appointments</button>
-        <button type="button" data-chat-prompt="I want to cancel an appointment">↶ Cancel appointment</button>
-        <button type="button" data-chat-prompt="Show available doctors">✚ Doctor availability</button>
-        <button type="button" data-chat-prompt="Show the hospital price list">₹ Service prices</button>
-        <button type="button" data-chat-prompt="Show my bills">▤ My bills</button>
-        <button type="button" data-chat-prompt="Show medicine prices and stock">✚ Medicine catalogue</button>
-        {% if user.role in ['admin','reception'] %}<button type="button" data-chat-prompt="Create a bill">＋ Create invoice</button>{% endif %}
-      </div></div>
+      <div class="assistant-guide">
+        <div><b>Start an action</b><p>Choose a task below. It will start the conversation automatically. The assistant will ask you for any missing information and confirm when the operation succeeds.</p></div>
+        <div class="chat-examples">
+          <button type="button" data-chat-prompt="I want to book an appointment">＋ Start appointment booking</button>
+          <button type="button" data-chat-prompt="Show my appointments">▣ View my appointments</button>
+          <button type="button" data-chat-prompt="I want to cancel an appointment">↶ Start appointment cancellation</button>
+          <button type="button" data-chat-prompt="Show available doctors">✚ Find a doctor</button>
+          <button type="button" data-chat-prompt="Show the hospital price list">₹ View hospital prices</button>
+          <button type="button" data-chat-prompt="Show my bills">▤ View my bills</button>
+          <button type="button" data-chat-prompt="Show medicine prices and stock">✚ Search medicines and stock</button>
+          {% if user.role in ['admin','reception'] %}<button type="button" data-chat-prompt="Create a bill">＋ Start creating an invoice</button>{% endif %}
+          <button type="button" data-chat-prompt="What services does this hospital provide?">♡ Ask about hospital services</button>
+        </div>
+      </div>
       <div class="chat-log" id="chat-log"><div class="bot">Welcome to Greenfield Hospital. Choose an action above or ask a question. I can guide you through appointments, billing, doctor availability, pharmacy prices, and hospital information.</div></div>
       <form id="chat-form" class="chat-form"><input id="chat-question" maxlength="500" placeholder="Example: Book Dr. Asha Mehta tomorrow at 10 AM" required><button>Send message</button></form>
       <div class="section-title price-heading"><div><h2>Hospital service price list</h2><p>Demonstration rates only — confirm final charges with reception</p></div><button type="button" id="reload-prices" class="utility-btn">↻ Refresh prices</button></div>
       <div id="assistant-price-list" class="price-grid"><p>Loading current price list…</p></div>
     </section>
     <section id="history" class="panel"><div class="section-title"><div><h2>Displayed conversation history</h2><p>Your previous chatbot questions and the answers recorded for this account</p></div><button type="button" id="refresh-history" class="utility-btn">↻ Refresh history</button></div><div id="history-list" class="history-list"><p>Loading saved conversations…</p></div></section>
-    {% if user.role in ['admin','reception'] %}<section id="analytics" class="panel"><div class="section-title"><div><h2>Reports & analytics</h2><p>Operational overview and patient query trends</p></div><a class="report-button" href="{{ url_for('download_report') }}">↓ Download report</a></div><div id="analytics-summary" class="cards"></div><h3>Queries by topic</h3><div id="topic-list" class="list"></div><h3>Classifier labels</h3><div id="category-list" class="list"></div></section>{% endif %}
+    {% if user.role in ['admin','reception'] %}<section id="analytics" class="panel"><div class="section-title"><div><h2>Reports & analytics</h2><p>Operational overview and patient query trends</p></div><a class="report-button" href="{{ url_for('download_report') }}">↓ Download report</a></div><div id="analytics-summary" class="cards"></div><h3>Queries by topic</h3><div id="topic-list" class="list"></div><h3>Question classification (internal)</h3><p class="muted">These labels describe how the system classifies incoming questions; they are not patient actions or menu options.</p><div id="category-list" class="list"></div></section>{% endif %}
     <footer><span>✚ GREENFIELD HOSPITAL</span><span>Care management workspace · Demonstration environment</span></footer>
   </main>
 </div>
