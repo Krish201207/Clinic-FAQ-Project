@@ -18,7 +18,7 @@ $('#reload-prices')?.addEventListener('click',()=>loadPriceList().catch(notify))
 async function loadAnalytics(){const d=await api('/api/analytics');$('#analytics-summary').innerHTML=[['Total chatbot queries',d.total_queries],['Appointments',d.appointments],['Registered patients',d.patients],['Unpaid bill total',money(d.unpaid_total)]].map(x=>`<article><span>${x[0]}</span><strong>${x[1]}</strong></article>`).join('');$('#topic-list').innerHTML=d.topics.map(x=>`<article><b>${esc(x.label)}</b><strong>${x.count}</strong></article>`).join('')||'<p>No query data yet.</p>';$('#category-list').innerHTML=d.categories.map(x=>`<article><b>${esc(x.label)}</b><strong>${x.count}</strong></article>`).join('')||'<p>No classifications yet.</p>'}
 function loadTab(id){const map={doctors:loadDoctors,appointments:loadAppointments,billing:loadBills,records:loadRecords,medicines:loadMedicines,analytics:loadAnalytics,history:loadChatHistory,assistant:loadPriceList};if(map[id])map[id]().catch(notify)}
 
-// Executive dashboard enhancements: live KPIs, workspace search, theme and print controls.
+// Executive dashboard enhancements: live KPIs, workspace search and theme controls.
 async function loadDashboardMetrics(){
   try{const requests=[api('/api/appointments'),api('/api/doctors')];if(['admin','reception','patient'].includes(window.HOSPITAL_ROLE))requests.push(api('/api/bills'));const [a,d,b]=await Promise.all(requests);
     const ka=$('#kpi-appointments'),kd=$('#kpi-doctors');if(ka)ka.textContent=a.appointments.length;if(kd)kd.textContent=d.doctors.length;
