@@ -1,1 +1,15 @@
-{% extends 'base.html' %}{% block body %}<main class="auth"><h1>Create patient account</h1><form method="post"><label>Full name<input name="name" maxlength="100" required></label><label>Email<input name="email" type="email" required></label><label>Phone<input name="phone" maxlength="30"></label><label>Password (at least 8 characters)<input name="password" type="password" minlength="8" required></label><button>Create account</button></form><p>Already registered? <a href="/login">Sign in</a></p></main>{% endblock %}
+{% extends 'base.html' %}{% block body %}
+<main class="auth auth-register">
+  <div class="auth-brand"><span class="auth-mark">✚</span><span><b>GREENFIELD</b><small>HOSPITAL & MEDICAL CENTER</small></span></div>
+  <span class="auth-kicker">PATIENT REGISTRATION</span>
+  <h1>Create your account</h1>
+  <p class="auth-subtitle">Use your details to access appointments and hospital services.</p>
+  <form method="post" autocomplete="on">
+    <label>Full name<input name="name" maxlength="100" autocomplete="name" placeholder="Enter your full name" required></label>
+    <label>Email address<input name="email" type="email" autocomplete="email" placeholder="you@example.com" required></label>
+    <label>Password <span class="field-hint">At least 8 characters</span><input name="password" type="password" minlength="8" autocomplete="new-password" placeholder="Create a password" required></label>
+    <button type="submit">Create patient account <span>→</span></button>
+  </form>
+  <p class="auth-switch">Already registered? <a href="{{ url_for('login') }}">Sign in</a></p>
+  <p class="auth-footnote">Your password is stored as a secure hash, not plain text.</p>
+</main>{% endblock %}
