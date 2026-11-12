@@ -212,8 +212,26 @@ def roles(*allowed):
 
 
 def classify(question):
-    try: return CLASSIFIER.classify(question).get('category','UNAVAILABLE') if CLASSIFIER else 'UNAVAILABLE'
-    except Exception: return 'UNAVAILABLE'
+    """Return a stable classification even when the optional model cannot load."""
+    try:
+        if CLASSIFIER:
+            category = str(CLASSIFIER.classify(question).get('category', '')).upper()
+            if category in ('ROUTINE', 'SENSITIVE', 'UNSUPPORTED'):
+                return category
+    except Exception:
+        app.logger.exception('Classifier failed; using deterministic fallback')
+
+    q = re.sub(r'[^a-z0-9]+', ' ', str(question).lower()).strip()
+    if not q or len(q.split()) < 2:
+        return 'UNSUPPORTED'
+    urgent_terms = (
+        'chest pain', 'difficulty breathing', 'cannot breathe', 'cant breathe',
+        'shortness of breath', 'severe bleeding', 'unconscious', 'overdose',
+        'suicidal', 'self harm', 'stroke symptoms', 'seizure'
+    )
+    if any(term in q for term in urgent_terms):
+        return 'SENSITIVE'
+    return 'ROUTINE'
 
 
 def topic_for(question):
@@ -292,12 +310,31 @@ def logout():
 def history_page(): return render_template('history.html', user=current_user())
 
 @app.get('/api/chat-history')
+@app.get('/api/history')  # Compatibility route for the standalone history page.
 @login_required
 def chat_history():
     u=current_user()
     with db() as c:
-        rows=c.execute('SELECT question,answer,classification,topic,created_at FROM chat_history WHERE user_id=? ORDER BY id DESC LIMIT 200',(u['id'],)).fetchall()
-    return jsonify(history=[dict(r) for r in rows])
+        rows=c.execute('SELECT id,question,answer,classification,topic,created_at FROM chat_history WHERE user_id=? ORDER BY id DESC LIMIT 200',(u['id'],)).fetchall()
+        history=[]
+        for row in rows:
+            item=dict(row)
+            if item['classification'] not in ('ROUTINE','SENSITIVE','UNSUPPORTED'):
+                item['classification']=classify(item['question'])
+                c.execute('UPDATE chat_history SET classification=? WHERE id=?',
+                          (item['classification'],item['id']))
+            history.append(item)
+    return jsonify(history=history)
+
+
+@app.delete('/api/chat-history')
+@app.delete('/api/history')  # Compatibility route for the standalone history page.
+@login_required
+def clear_chat_history():
+    u=current_user()
+    with db() as c:
+        c.execute('DELETE FROM chat_history WHERE user_id=?',(u['id'],))
+    return jsonify(success=True,message='Conversation history cleared.')
 
 @app.get('/api/me')
 @login_required
@@ -543,13 +580,13 @@ def _chat_action(question, user):
         r'\b(book|booking|schedule|reserve|make|set up)\b.*\b(appointment|visit|consultation)\b'
         r'|\b(appointment|visit|consultation)\b.*\b(book|schedule|reserve|with)\b'
         r'|\b(appointment|consultation)\s+with\s+'
-        r'|\b(see|visit|consult)\s+(?:a\s+)?(?:doctor|cardiologist|dermatologist|orthopedic|orthopaedic|physician)\b',
+        r'|\b(see|visit|consult)\s+(?:a\s+)?(?:doctor|cardiologist|dermatologist|orthopedic|orthopaedic|physician)\b'
+        r'|\b(book|schedule|reserve)\s+(?:me\s+)?(?:with\s+)?(?:dr\.?\s+|doctor\s+)?[a-z][a-z .-]{2,50}\b',
         low
     )
     list_doctors = any(x in low for x in (
         'doctor names', 'list doctors', 'show doctors', 'available doctors',
-        'doctor availability', 'which doctors', 'medical staff', 'cardiologist',
-        'dermatologist', 'orthopedic doctor', 'orthopaedic doctor'
+        'doctor availability', 'which doctors', 'medical staff'
     ))
     list_appointments = any(x in low for x in (
         'my appointments', 'show appointments', 'list appointments',
@@ -665,7 +702,8 @@ def _chat_action(question, user):
             _parse_chat_date(q) or _parse_chat_time(q) or
             any(x in low for x in ('dr.', 'doctor', 'cardiologist', 'cardiology',
                                    'dermatologist', 'dermatology', 'orthopedic',
-                                   'orthopaedic', 'general medicine', 'reason is'))
+                                   'orthopaedic', 'general medicine', 'reason is')) or
+            any(d['name'].lower() in low for d in doctors)
         )
         if not booking_words and not is_detail_reply:
             if pending:
