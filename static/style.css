@@ -38,3 +38,19 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
 [hidden]{display:none!important}
 @media(max-width:900px){.workspace-top{padding:14px 0;background:transparent;border:0;box-shadow:none}.top-actions{display:flex;flex-wrap:wrap}.profile-copy{display:none}}
 @media(max-width:650px){.top-actions{display:flex}.utility-btn{padding:7px 9px}.auth{margin:24px auto;padding:23px}.welcome-strip:after{display:none}}
+
+/* Guided patient actions, visible history, and fee transparency */
+.assistant-guide{display:grid;grid-template-columns:1fr;gap:10px;padding:17px 18px;border:1px solid #d8e8ec;border-radius:14px;background:linear-gradient(115deg,#e8f4fb,#e8f7f2 55%,#fff2e8);margin:14px 0 16px}
+.assistant-guide>b,.assistant-guide strong{color:#173f53}.assistant-guide p{margin:4px 0 0;color:#687f88;font-size:12px}
+.chat-examples{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 2px}
+.chat-examples button{border:1px solid #d5e6e5;background:#fff;color:#176b70;border-radius:10px;padding:9px 12px;font-size:12px;font-weight:700;cursor:pointer;box-shadow:0 3px 8px rgba(25,70,80,.045)}
+.chat-examples button:nth-child(4n+1){background:#eaf2ff;color:#3a69a1;border-color:#d6e4fa}.chat-examples button:nth-child(4n+2){background:#e6f6f0;color:#267c66;border-color:#cfeade}.chat-examples button:nth-child(4n+3){background:#fff0eb;color:#b65d4d;border-color:#f4d9d0}.chat-examples button:nth-child(4n){background:#f1edfb;color:#725ca7;border-color:#e0d9f3}
+.chat-examples button:hover{transform:translateY(-1px);filter:brightness(.98)}
+.price-heading{margin-top:28px;padding-top:18px;border-top:1px solid var(--line)}
+.price-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:11px;margin-top:14px}
+.price-card{display:flex;flex-direction:column;gap:6px;padding:14px;border:1px solid #dce8ec;border-radius:12px;background:linear-gradient(145deg,#fff,#f0f7fc);border-top:3px solid #5288bb;min-height:126px}
+.price-card:nth-child(3n+2){background:linear-gradient(145deg,#fff,#edf8f3);border-top-color:#42a18a}.price-card:nth-child(3n){background:linear-gradient(145deg,#fff,#fff3ec);border-top-color:#df9272}
+.price-card span{font-size:9px;text-transform:uppercase;letter-spacing:1px;color:#78909a;font-weight:800}.price-card b{font-size:12px;color:#254654}.price-card strong{font:800 19px Manrope,sans-serif;color:#117d79;margin-top:3px}.price-card small{font-size:10px;color:#778a92}
+.history-list{display:grid;gap:12px}.history-entry{padding:16px 18px!important;border-left:4px solid #4c91b6!important;background:linear-gradient(110deg,#fff,#f4f8fb)!important}.history-entry:nth-child(3n+2){border-left-color:#45a28a!important}.history-entry:nth-child(3n){border-left-color:#d88b68!important}.history-entry b{font-size:13px;color:#24495a}.history-entry small{display:block;margin-top:6px;color:#83939a}.history-entry p{white-space:pre-wrap;color:#4b626c;margin:10px 0 0;font-size:12px}
+.dark-mode .assistant-guide{background:linear-gradient(115deg,#1d3d52,#1d4a45,#4b3a36);border-color:#345761}.dark-mode .assistant-guide p,.dark-mode .price-card small,.dark-mode .history-entry small{color:#b4c6cc}.dark-mode .price-card,.dark-mode .history-entry{background:#1b3441!important;border-color:#34505b}.dark-mode .price-card b,.dark-mode .history-entry b,.dark-mode .history-entry p{color:#e8f0f2}.dark-mode .chat-examples button{background:#243f4c;color:#dcebed;border-color:#3c5a64}
+@media(max-width:650px){.price-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.assistant-guide{padding:13px}.history-entry{padding:13px!important}}

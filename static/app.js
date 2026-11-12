@@ -10,9 +10,13 @@ if($('#bill-form'))$('#bill-form').addEventListener('submit',async e=>{e.prevent
 async function loadMedicines(){const d=await api('/api/medicines?q='+encodeURIComponent($('#medicine-search').value));$('#medicines-list').innerHTML=d.medicines.map(x=>`<article><div><b>${esc(x.name)}</b><small>${esc(x.strength)} · ${x.stock>0?'In stock: '+x.stock:'Out of stock'}</small></div><strong>${money(x.price)}</strong></article>`).join('')||'<p>No matching medicines.</p>'}$('#medicine-search').addEventListener('input',()=>loadMedicines());if($('#medicine-form'))$('#medicine-form').addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/medicines',{method:'POST',body:JSON.stringify({name:$('#med_name').value,strength:$('#med_strength').value,price:$('#med_price').value,stock:$('#med_stock').value})});e.target.reset();loadMedicines()}catch(x){notify(x)}});
 async function loadRecords(){const d=await api('/api/records');$('#records-list').innerHTML=d.records.map(x=>`<article><div><b>${esc(x.record_type)}</b><small>${x.patient_name?'Patient: '+esc(x.patient_name)+' · ':''}${esc(x.created_at)}</small><small>${esc(x.notes)}</small>${x.file_name?`<a href="/uploads/${encodeURIComponent(x.file_name)}">Download attachment</a>`:''}</div></article>`).join('')||'<p>No records available.</p>'}
 if($('#record-form'))$('#record-form').addEventListener('submit',async e=>{e.preventDefault();try{const r=await fetch('/api/records',{method:'POST',credentials:'same-origin',body:new FormData(e.target)});const d=await r.json();if(!r.ok)throw Error(d.error);e.target.reset();loadRecords()}catch(x){notify(x)}});
-if($('#chat-form'))$('#chat-form').addEventListener('submit',async e=>{e.preventDefault();const q=$('#chat-question').value.trim();if(!q)return;const log=$('#chat-log');log.insertAdjacentHTML('beforeend',`<div class="mine">${esc(q)}</div>`);$('#chat-question').value='';try{const d=await api('/ask',{method:'POST',body:JSON.stringify({question:q})});log.insertAdjacentHTML('beforeend',`<div class="bot">${esc(d.answer)}</div>`)}catch(x){log.insertAdjacentHTML('beforeend',`<div class="bot">${esc(x.message)}</div>`)}log.scrollTop=log.scrollHeight});
+if($('#chat-form'))$('#chat-form').addEventListener('submit',async e=>{e.preventDefault();const q=$('#chat-question').value.trim();if(!q)return;const log=$('#chat-log');log.insertAdjacentHTML('beforeend',`<div class="mine">${esc(q)}</div>`);$('#chat-question').value='';try{const d=await api('/ask',{method:'POST',body:JSON.stringify({question:q})});log.insertAdjacentHTML('beforeend',`<div class="bot">${esc(d.answer)}</div>`);loadChatHistory().catch(()=>{})}catch(x){log.insertAdjacentHTML('beforeend',`<div class="bot">${esc(x.message)}</div>`)}log.scrollTop=log.scrollHeight});
+async function loadChatHistory(){const box=$('#history-list');if(!box)return;const d=await api('/api/chat-history');box.innerHTML=(d.history||[]).map(x=>`<article class="history-entry"><div><b>${esc(x.question)}</b><small>${esc(x.created_at)} · ${esc(x.topic)} · ${esc(x.classification)}</small><p>${esc(x.answer)}</p></div></article>`).join('')||'<p>No saved conversations yet. Start a conversation in Patient help desk.</p>'}
+async function loadPriceList(){const box=$('#assistant-price-list');if(!box)return;const d=await api('/api/price-list');const serviceCards=(d.services||[]).map(x=>`<article class="price-card"><span>${esc(x.department)}</span><b>${esc(x.name)}</b><strong>${money(x.price)}</strong><small>${esc(x.description)}</small></article>`).join('');const doctorCards=(d.doctors||[]).map(x=>`<article class="price-card doctor-price"><span>${esc(x.department)}</span><b>${esc(x.name)}</b><strong>${money(x.price)}</strong><small>Consultation fee</small></article>`).join('');const medicineCards=(d.medicines||[]).map(x=>`<article class="price-card medicine-price"><span>Pharmacy</span><b>${esc(x.name)} ${esc(x.strength)}</b><strong>${money(x.price)}</strong><small>${Number(x.stock)>0?'Listed stock: '+Number(x.stock):'Out of stock'}</small></article>`).join('');box.innerHTML=serviceCards+doctorCards+medicineCards||'<p>No prices have been configured.</p>'}
+$('#refresh-history')?.addEventListener('click',()=>loadChatHistory().catch(notify));
+$('#reload-prices')?.addEventListener('click',()=>loadPriceList().catch(notify));
 async function loadAnalytics(){const d=await api('/api/analytics');$('#analytics-summary').innerHTML=[['Total chatbot queries',d.total_queries],['Appointments',d.appointments],['Registered patients',d.patients],['Unpaid bill total',money(d.unpaid_total)]].map(x=>`<article><span>${x[0]}</span><strong>${x[1]}</strong></article>`).join('');$('#topic-list').innerHTML=d.topics.map(x=>`<article><b>${esc(x.label)}</b><strong>${x.count}</strong></article>`).join('')||'<p>No query data yet.</p>';$('#category-list').innerHTML=d.categories.map(x=>`<article><b>${esc(x.label)}</b><strong>${x.count}</strong></article>`).join('')||'<p>No classifications yet.</p>'}
-function loadTab(id){const map={doctors:loadDoctors,appointments:loadAppointments,billing:loadBills,records:loadRecords,medicines:loadMedicines,analytics:loadAnalytics};if(map[id])map[id]().catch(notify)}
+function loadTab(id){const map={doctors:loadDoctors,appointments:loadAppointments,billing:loadBills,records:loadRecords,medicines:loadMedicines,analytics:loadAnalytics,history:loadChatHistory,assistant:loadPriceList};if(map[id])map[id]().catch(notify)}
 
 // Executive dashboard enhancements: live KPIs, workspace search, theme and print controls.
 async function loadDashboardMetrics(){
@@ -48,6 +52,8 @@ refreshButton?.addEventListener('click', async () => {
   const active = document.querySelector('.panel.active')?.id || 'overview';
   const loaders = {
     overview: loadDashboardMetrics,
+    assistant: loadPriceList,
+    history: loadChatHistory,
     appointments: loadAppointments,
     doctors: loadDoctors,
     billing: loadBills,
@@ -66,7 +72,7 @@ refreshButton?.addEventListener('click', async () => {
 
 // Only load modules the signed-in role is allowed to access.
 (async function initialLoad() {
-  const tasks = [loadDoctors(), loadAppointments(), loadMedicines()];
+  const tasks = [loadDoctors(), loadAppointments(), loadMedicines(), loadPriceList()];
   if (['patient', 'admin', 'reception'].includes(window.HOSPITAL_ROLE)) tasks.push(loadBills());
   if (['patient', 'doctor', 'admin'].includes(window.HOSPITAL_ROLE)) tasks.push(loadRecords());
   try { await Promise.all(tasks); }
