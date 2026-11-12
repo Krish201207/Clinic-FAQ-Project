@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+hospital.db
+clinic_history.db
+.env
+uploads/*
+!uploads/.gitkeep
