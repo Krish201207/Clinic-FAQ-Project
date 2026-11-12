@@ -121,15 +121,7 @@ def _get_or_create_faq_cache(faq_content, prompt):
 
 def _generate_with_cache_or_fallback(question, faq_context, system_instruction, max_output_tokens=120):
     """Generate using the cached FAQ when available, otherwise send FAQ inline."""
-    stable_cached_instruction = (
-        "You are an assistant for this specific community clinic. "
-        "Answer questions about the clinic's services and operations using "
-        "the supplied clinic FAQ as the source of truth. Do not invent clinic "
-        "details. Do not provide diagnosis, treatment, or medication advice. "
-        "For questions outside the clinic's services and operations, respond "
-        "appropriately that you can only help with clinic-related information."
-    )
-    cache_name = _get_or_create_faq_cache(faq_context, stable_cached_instruction)
+    cache_name = _get_or_create_faq_cache(faq_context, system_instruction)
 
     if cache_name:
         try:
