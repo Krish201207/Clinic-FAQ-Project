@@ -1,6 +1,6 @@
-# Hospital Management + AI Patient Assistant (Flask demo)
+# Clinic FAQ Project
 
-This package extends the existing Flask Clinic FAQ concept with six working demo modules: appointments, doctor availability, patient query analytics, billing, health-record metadata/file uploads, and medicine prices/inventory. The Gemini FAQ assistant and existing optional `clinic_classifier.py` are retained as optional integrations.
+This package extends the existing Flask Clinic FAQ concept with six working demo modules: appointments, doctor availability, patient query analytics, , health-record metadata/file uploads, and medicine prices/inventory. The Gemini FAQ assistant and existing optional `clinic_classifier.py` are retained as optional integrations.
 
 ## Run locally
 
@@ -30,7 +30,7 @@ Patients can register through the registration page. These staff accounts and th
 
 ## Important limitations
 
-This is an educational prototype, not a production hospital information system. It has basic login and role checks but does not implement production-grade account recovery, MFA, audit trails, CSRF protection, encryption/key management, consent workflows, payment-gateway integration, verified pharmacy/doctor data, or regulatory compliance. Do not enter real patient data or deploy it for real clinical use without a security and privacy review. Uploaded files are stored locally in `uploads/`; configure persistent private storage and backups before deployment. The sample doctor schedules, medicine prices, and stock values are fictional demo data. Billing marks a bill as paid for demonstration only; it does not process payments.
+This is an educational prototype, not a production hospital information system. It has basic login and role checks but does not implement production-grade account recovery, MFA, audit trails, CSRF protection, encryption/key management, consent workflows, payment-gateway integration, verified pharmacy/doctor data, or regulatory compliance. Do not enter real patient data or deploy it for real clinical use without a security and privacy review. Uploaded files are stored locally in `uploads/`; configure persistent private storage and backups before deployment. The sample doctor schedules, medicine prices, and stock values are fictional demo data.  marks a bill as paid for demonstration only; it does not process payments.
 
 ## Existing project compatibility
 
@@ -86,20 +86,6 @@ The clinical dashboard uses distinct department color accents, colored service t
 
 ## Chat assistant actions
 
-The Patient Help Desk routes supported commands to database operations before asking the FAQ/AI layer.
-Examples:
-- `Book an appointment with Dr. Asha Mehta tomorrow at 10 AM`
-- `Book appointment with cardiologist at 5 PM` (the assistant asks for any missing date)
-- `Show my appointments`
-- `Cancel appointment #12`
-- `Show available doctors`
-- `Show the hospital price list`
-- `Find paracetamol`
-- `Show my bills`
-- Reception/admin: `Create bill for patient ID 5 amount 750 description consultation`
+The assistant supports natural-language appointment booking and management, doctor availability, clinic FAQ answers, and medicine catalogue lookups. It asks for missing booking details and confirms only after the database insert succeeds. For example: “Book me a cardiologist next Friday before noon.” It checks the doctor's published schedule and selects an available morning slot before confirming.
 
-The assistant only confirms a booking after the database insert succeeds. It checks doctor schedule, future date, working hours, and duplicate doctor/time slots. If a booking is incomplete, it asks for missing details. An unrelated request no longer gets trapped in an unfinished booking flow.
-
-The login page no longer displays demonstration account credentials. Keep test credentials in a private deployment note, not on the public sign-in screen.
-
-The doctor schedules, prices, and medicine stock are sample data and must be replaced with verified hospital data before real use. This is a demonstration system, not a production clinical system.
+Medicine inventory is demonstration data. Medicine form labels (tablet, capsule, drinkable, sachet) describe catalogue items only; the assistant does not prescribe medicines or provide dosage advice.
