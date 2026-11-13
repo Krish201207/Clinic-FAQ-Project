@@ -20,7 +20,7 @@ The SQLite database is initialized automatically. Existing databases are migrate
 - View and cancel appointments.
 - Medicine inventory with 60+ fictional sample items, medicine forms, stock status, and supplier purchase records that update stock.
 - Doctor directory with specialty, qualifications, experience, professional profile summary, certifications, consultation hours, and fees.
-- Due-bill tracking with a payment test QR flow. Test confirmations are stored as `Paid - Test`; this flow is not connected to a payment gateway.
+- Due-bill tracking with a scannable payment test QR. Scanning opens a bill confirmation page; test confirmations are stored as `Paid - Test`. The workflow is not connected to a payment gateway.
 - Staff emergency-case registration and a direct India emergency call link (112). The app does not dispatch emergency services.
 - Account-specific chat history.
 - Medical record metadata and attachments for permitted staff roles.
