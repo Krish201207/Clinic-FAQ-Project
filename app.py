@@ -568,7 +568,7 @@ def create_bill_qr(bill_id):
         if u['role']=='patient' and bill['patient_id']!=u['id']:return jsonify(error='Not your bill.'),403
         if bill['status']!='Unpaid':return jsonify(error='This bill is no longer unpaid.'),409
         c.execute('UPDATE bills SET payment_token=? WHERE id=?',(token,bill_id))
-    return jsonify(url=url_for('scan_payment',token=token,_external=True))
+    return jsonify(url=url_for('scan_payment',token=token))
 
 @app.route('/payment/scan/<token>', methods=['GET','POST'])
 def scan_payment(token):
