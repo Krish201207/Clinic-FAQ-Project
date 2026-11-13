@@ -438,8 +438,13 @@ def book_appointment():
             if weekday not in allowed_days: return jsonify(error='This doctor is not scheduled on that day.'),400
             if not (doctor['start_time'] <= slot < doctor['end_time']): return jsonify(error='That time is outside this doctor\'s listed hours.'),400
             c.execute('INSERT INTO appointments(patient_id,doctor_id,appointment_date,appointment_time,reason) VALUES(?,?,?,?,?)',(u['id'],doctor_id,day.isoformat(),slot,str(data.get('reason',''))[:300]))
+            bill_amount=round(float(doctor['consultation_fee'] or 0),2)
+            bill_id=None
+            if u['role']=='patient' and bill_amount>0:
+                bill_desc=f"Appointment with {doctor['name']} on {day.isoformat()} at {slot}"
+                bill_id=c.execute('INSERT INTO bills(patient_id,description,amount) VALUES(?,?,?)',(u['id'],bill_desc,bill_amount)).lastrowid
         except sqlite3.IntegrityError: return jsonify(error='That doctor already has an appointment at this time. Choose another slot.'),409
-    return jsonify(success=True,message='Appointment booked.'),201
+    return jsonify(success=True,bill_id=bill_id if u['role']=='patient' else None,amount=bill_amount if u['role']=='patient' else 0,message='Appointment booked. An unpaid bill has been added to Due payments.' if bill_id else 'Appointment booked.'),201
 
 @app.patch('/api/appointments/<int:appointment_id>')
 @login_required
@@ -492,12 +497,15 @@ def medicine_orders():
     if quantity<1:return jsonify(error='Quantity must be at least one.'),400
     if pickup_day<date.today():return jsonify(error='Pickup date cannot be in the past.'),400
     with db() as c:
-        medicine=c.execute('SELECT id,name,stock FROM medicines WHERE id=?',(medicine_id,)).fetchone()
+        medicine=c.execute('SELECT id,name,strength,price,stock FROM medicines WHERE id=?',(medicine_id,)).fetchone()
         if not medicine:return jsonify(error='Medicine not found.'),404
         if medicine['stock']<quantity:return jsonify(error='Not enough stock for that quantity.'),409
+        total=round(float(medicine['price'] or 0)*quantity,2)
         c.execute('UPDATE medicines SET stock=stock-?,updated_at=CURRENT_TIMESTAMP WHERE id=?',(quantity,medicine_id))
         cur=c.execute('INSERT INTO medicine_orders(patient_id,medicine_id,quantity,pickup_date,pickup_time) VALUES(?,?,?,?,?)',(u['id'],medicine_id,quantity,pickup_day.isoformat(),pickup_time))
-    return jsonify(success=True,order_id=cur.lastrowid,message='Medicine reserved. Please collect it at the pharmacy at your selected pickup time.'),201
+        bill_desc=f"Medicine order #{cur.lastrowid}: {medicine['name']} {medicine['strength'] or ''} × {quantity}".strip()
+        bill_id=c.execute('INSERT INTO bills(patient_id,description,amount) VALUES(?,?,?)',(u['id'],bill_desc,total)).lastrowid
+    return jsonify(success=True,order_id=cur.lastrowid,bill_id=bill_id,amount=total,message=f'Medicine reserved. Amount due: ₹{total:.2f}. Open Due payments to generate your simulated QR.'),201
 
 @app.post('/api/medicines')
 @roles('admin','reception')
