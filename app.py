@@ -967,7 +967,12 @@ def _chat_action(question, user):
                 words = {'one':1,'a':1,'an':1,'two':2,'couple':2,'pair':2,'three':3,'few':3,'four':4,'five':5}
                 qty = int(raw_qty) if raw_qty.isdigit() else words.get(raw_qty, qty)
             if not qty:
-                qty = 1
+                pending_order['stage'] = 'details'
+                pending_order['medicine_id'] = selected['id']
+                pending_order['pickup_date'] = _parse_chat_date(q) or pending_order.get('pickup_date')
+                pending_order['pickup_time'] = _parse_chat_time(q) or pending_order.get('pickup_time')
+                session['chat_medicine_order'] = pending_order
+                return {'answer': f"How many units of {selected['name']} should I order? You can say one, two, a few, or give a number."}
             if qty < 1 or qty > 100:
                 return {'answer': 'Please choose a quantity between 1 and 100.'}
             if selected['stock'] < qty:
