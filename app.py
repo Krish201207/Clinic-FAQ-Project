@@ -131,6 +131,10 @@ def init_db():
           id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, department TEXT NOT NULL,
           price REAL NOT NULL DEFAULT 0, description TEXT DEFAULT '', active INTEGER DEFAULT 1);
         ''')
+        bill_columns = {row['name'] for row in c.execute('PRAGMA table_info(bills)')}
+        if 'paid_at' not in bill_columns:
+            c.execute("ALTER TABLE bills ADD COLUMN paid_at TEXT DEFAULT ''")
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS one_active_booking_per_bed ON bed_bookings(bed_id) WHERE status='Booked'")
         if c.execute('SELECT COUNT(*) FROM hospital_services').fetchone()[0] == 0:
             c.executemany(
                 'INSERT INTO hospital_services(name,department,price,description) VALUES(?,?,?,?)',
