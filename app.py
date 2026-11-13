@@ -855,7 +855,7 @@ def _chat_action(question, user):
         'test price', 'show prices', 'show fees', 'rate list'
     ))
     medicine_intent = any(x in low for x in ('medicine', 'medicines', 'pharmacy', 'stock', 'price of'))
-    order_intent = bool(re.search(r'\b(order|buy|purchase|get me|pick up|pickup)\b', low))
+    order_intent = bool(re.search(r'\b(order|buy|purchase|get me|pick up|pickup)\b', low) or (re.search(r'\b(i need|i want)\b', low) and re.search(r'\b(medicine|pills?|tablets?|capsules?|syrup)\b', low)))
 
     with db() as c:
         doctors = [dict(x) for x in c.execute(
@@ -958,6 +958,7 @@ def _chat_action(question, user):
                 session.pop('chat_medicine_order', None)
                 return {'answer': 'I could not match that medicine to an in-stock catalogue item. Please check the Pharmacy section for available names.'}
             residue = low.replace(selected['name'].lower(), ' ')
+            residue = re.sub(r'\b\d+\s*mg\b', ' ', residue)
             if selected['strength']:
                 residue = residue.replace(str(selected['strength']).lower(), ' ')
             qty = pending_order.get('quantity')
