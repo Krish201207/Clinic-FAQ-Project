@@ -170,6 +170,10 @@ def init_db():
               ('ORS','1 sachet',22,80,'Drinkable'),('Antacid tablets','Standard',35,40,'Tablet'),
               ('Vitamin C','500 mg',45,30,'Tablet')])
         extras=[
+('Dr. Asha Mehta','General Medicine','MBBS','Mon-Fri','09:00','16:00',300,8,'General physician providing primary care consultations and routine health assessments.','MBBS'),
+('Dr. Rahul Verma','Cardiology','MD, DM Cardiology','Mon,Wed,Fri','10:00','14:00',600,12,'Cardiology consultations and cardiovascular follow-up.','DM Cardiology'),
+('Dr. Neha Kapoor','Dermatology','MBBS, MD Dermatology','Tue,Thu,Sat','09:00','13:00',500,9,'Dermatology consultations for common skin and hair concerns.','MD Dermatology'),
+('Dr. Arjun Singh','Orthopedics','MS Orthopedics','Mon-Thu','11:00','17:00',500,11,'Orthopedic consultations for bone, joint and mobility concerns.','MS Orthopedics'),
 ('Dr. Vikram Rao','Cardiology','MD, DM Cardiology','Mon-Fri','09:00','15:00',650,12,'Specialist in adult cardiovascular assessment and follow-up.','DM Cardiology'),
 ('Dr. Priya Nair','Pediatrics','MBBS, MD Pediatrics','Mon-Sat','09:00','14:00',450,9,'Provides general pediatric consultations and child wellness reviews.','MD Pediatrics'),
 ('Dr. Kabir Malhotra','Neurology','MBBS, DM Neurology','Mon,Wed,Fri','10:00','16:00',750,11,'Focuses on neurological assessment and ongoing care.','DM Neurology'),
