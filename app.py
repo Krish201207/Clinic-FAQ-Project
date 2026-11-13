@@ -494,7 +494,6 @@ def download_report():
         writer.writerow(['Total appointments', c.execute('SELECT COUNT(*) FROM appointments').fetchone()[0]])
         writer.writerow(['Booked appointments', c.execute("SELECT COUNT(*) FROM appointments WHERE status='Booked'").fetchone()[0]])
         writer.writerow(['Total chatbot queries', c.execute('SELECT COUNT(*) FROM chat_history').fetchone()[0]])
-        writer.writerow(['Unpaid bill amount (INR)', c.execute("SELECT COALESCE(SUM(amount),0) FROM bills WHERE status='Unpaid'").fetchone()[0]])
         writer.writerow([])
         writer.writerow(['Appointments'])
         writer.writerow(['Appointment ID','Patient','Doctor','Department','Date','Time','Status','Reason'])
@@ -552,7 +551,7 @@ def _parse_chat_date(text):
 def _looks_like_booking_request(text):
     q = re.sub(r'[^a-z0-9]+', ' ', text.lower()).strip()
     patterns = (
-        r'\b(book|booking|schedule|reserve)\b.*\b(appointment|visit|consultation|doctor|physician|specialist)\b',
+        r'\b(book|booking|schedule|reserve)\b.*\b(appointment|visit|consultation|doctor|physician|specialist|cardiologist|dermatologist|orthopedic|orthopaedic)\b',
         r'\b(appointment|visit|consultation)\b.*\b(book|schedule|reserve|with)\b',
         r'\b(appointment|consultation)\s+with\b',
         r'\b(see|visit|consult|meet|talk to)\s+(a|an|the|my)?\s*(doctor|physician|specialist|cardiologist|dermatologist|orthopedic|orthopaedic)\b',
@@ -659,7 +658,7 @@ def _chat_action(question, user):
             lines.extend(f"{r['name']} ({r['department']}) — ₹{r['price']:.2f}" for r in services)
             lines.append('Doctor consultation fees:')
             lines.extend(f"{r['name']} ({r['department']}) — ₹{r['consultation_fee']:.2f}" for r in doctor_fees)
-            lines.append('Medicine prices are available in the Pharmacy section. Confirm charges with reception before payment.')
+            lines.append('Medicine prices are available in the Medicine inventory section. Confirm charges with reception before payment.')
             return {'answer': '\n'.join(lines)}
 
         if medicine_intent:
@@ -736,7 +735,9 @@ def _chat_action(question, user):
             reason = pending.get('reason', '')
             if not reason:
                 reason = _extract_visit_reason(q)
-            if not reason and pending.get('awaiting_reason') and not booking_words:
+            if (not reason and pending.get('awaiting_reason') and not booking_words
+                    and not _parse_chat_date(q) and not _parse_chat_time(q)
+                    and not any(doc['name'].lower() in low or doc['department'].lower() in low for doc in doctors)):
                 reason = q[:300]
 
             pending = {
