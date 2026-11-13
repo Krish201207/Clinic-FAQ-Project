@@ -140,12 +140,12 @@ def init_db():
                     ('Cardiology consultation','Cardiology',600,'Specialist consultation'),
                     ('Dermatology consultation','Dermatology',500,'Specialist consultation'),
                     ('Orthopedics consultation','Orthopedics',500,'Specialist consultation'),
-                    ('Blood glucose test','Laboratory',80,'Demonstration price; confirm preparation with the lab'),
-                    ('Complete blood count','Laboratory',250,'Demonstration price'),
+                    ('Blood glucose test','Laboratory',80,'Listed laboratory rate; confirm preparation requirements with the lab'),
+                    ('Complete blood count','Laboratory',250,'Listed service rate'),
                     ('Urine routine test','Laboratory',120,'Demonstration price'),
                     ('Wound dressing','Nursing',150,'Basic dressing service; complexity may change charges'),
                     ('ECG','Diagnostics',200,'Demonstration price'),
-                    ('Registration','Front desk',0,'No registration fee in this demonstration catalogue'),
+                    ('Registration','Front desk',0,'No registration fee listed'),
                 ])
         medicine_columns = {row['name'] for row in c.execute('PRAGMA table_info(medicines)')}
         if 'dosage_form' not in medicine_columns:
@@ -504,7 +504,7 @@ def create_bill():
 
 @app.post('/api/bills/<int:bill_id>/test-payment')
 @login_required
-def demo_payment(bill_id):
+def test_payment(bill_id):
     u=current_user()
     with db() as c:
         bill=c.execute('SELECT * FROM bills WHERE id=?',(bill_id,)).fetchone()
@@ -786,7 +786,7 @@ def _chat_action(question, user):
         if price_intent:
             services = c.execute('SELECT name,department,price FROM hospital_services WHERE active=1 ORDER BY department,name').fetchall()
             doctor_fees = c.execute('SELECT name,department,consultation_fee FROM doctors WHERE active=1 ORDER BY department,name').fetchall()
-            lines = ['Clinic service price list (demonstration rates):']
+            lines = ['Clinic service price list:']
             lines.extend(f"{r['name']} ({r['department']}) — ₹{r['price']:.2f}" for r in services)
             lines.append('Doctor consultation fees:')
             lines.extend(f"{r['name']} ({r['department']}) — ₹{r['consultation_fee']:.2f}" for r in doctor_fees)
@@ -802,8 +802,8 @@ def _chat_action(question, user):
                 'SELECT name,strength,price,stock FROM medicines ORDER BY name LIMIT 15'
             ).fetchall()
             if not rows:
-                return {'answer': 'No matching item was found in the demonstration pharmacy catalogue.'}
-            return {'answer': 'Pharmacy catalogue (demonstration data):\n' + '\n'.join(
+                return {'answer': 'No matching item was found in the pharmacy catalogue.'}
+            return {'answer': 'Pharmacy catalogue:\n' + '\n'.join(
                 f"{r['name']} {r['strength']} — ₹{r['price']:.2f}; stock shown: {r['stock']}"
                 for r in rows
             )}
@@ -962,7 +962,7 @@ def _chat_action(question, user):
                 return {'answer': 'I could not understand the date or time. Please provide a date such as 2026-11-15 and a time such as 10:30 AM.'}
             if appt_day <= date.today():
                 session['chat_booking'] = pending
-                return {'answer': 'Please choose a future date. Same-day booking is not enabled in this demonstration schedule.'}
+                return {'answer': 'Please choose a future date. Same-day booking is not available in the current schedule.'}
 
             doc = selected
             weekday = appt_day.strftime('%a')
