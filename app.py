@@ -114,7 +114,11 @@ def init_db():
         CREATE TABLE IF NOT EXISTS bills(
           id INTEGER PRIMARY KEY, patient_id INTEGER NOT NULL REFERENCES users(id),
           description TEXT NOT NULL, amount REAL NOT NULL, status TEXT DEFAULT 'Unpaid',
-          created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP, paid_at TEXT DEFAULT '');
+        CREATE TABLE IF NOT EXISTS medicine_purchases(id INTEGER PRIMARY KEY,medicine_id INTEGER NOT NULL REFERENCES medicines(id),quantity INTEGER NOT NULL,supplier TEXT DEFAULT '',cost REAL DEFAULT 0,purchased_by INTEGER REFERENCES users(id),created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE IF NOT EXISTS beds(id INTEGER PRIMARY KEY,bed_number TEXT UNIQUE NOT NULL,ward TEXT NOT NULL,bed_type TEXT DEFAULT 'General',daily_rate REAL DEFAULT 800,status TEXT DEFAULT 'Available');
+        CREATE TABLE IF NOT EXISTS bed_bookings(id INTEGER PRIMARY KEY,bed_id INTEGER NOT NULL REFERENCES beds(id),patient_id INTEGER NOT NULL REFERENCES users(id),start_date TEXT NOT NULL,status TEXT DEFAULT 'Booked',created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE IF NOT EXISTS emergency_cases(id INTEGER PRIMARY KEY,patient_name TEXT NOT NULL,phone TEXT DEFAULT '',urgency TEXT NOT NULL,description TEXT DEFAULT '',status TEXT DEFAULT 'Open',created_by INTEGER REFERENCES users(id),created_at TEXT DEFAULT CURRENT_TIMESTAMP);
         CREATE TABLE IF NOT EXISTS health_records(
           id INTEGER PRIMARY KEY, patient_id INTEGER NOT NULL REFERENCES users(id),
           doctor_id INTEGER REFERENCES users(id), record_type TEXT NOT NULL,
@@ -160,6 +164,13 @@ def init_db():
               ('Paracetamol','500 mg',12,100,'Tablet'),('Cetirizine','10 mg',18,60,'Tablet'),
               ('ORS','1 sachet',22,80,'Drinkable'),('Antacid tablets','Standard',35,40,'Tablet'),
               ('Vitamin C','500 mg',45,30,'Tablet')])
+        extras=[('Dr. Vikram Rao','Cardiology','MD, DM','Mon-Fri','09:00','15:00',650),('Dr. Priya Nair','Pediatrics','MBBS, MD','Mon-Sat','09:00','14:00',450),('Dr. Kabir Malhotra','Neurology','MBBS, DM','Mon,Wed,Fri','10:00','16:00',750),('Dr. Simran Kaur','Gynecology','MBBS, MS','Tue-Sat','09:00','15:00',600),('Dr. Aditya Bose','ENT','MBBS, MS','Mon-Fri','11:00','17:00',500),('Dr. Meera Iyer','Ophthalmology','MBBS, MS','Mon-Sat','09:00','13:00',450),('Dr. Rohan Das','Psychiatry','MBBS, MD','Mon,Thu,Sat','10:00','16:00',700),('Dr. Ananya Shah','Dentistry','BDS, MDS','Mon-Sat','10:00','18:00',400),('Dr. Manish Gupta','Urology','MBBS, MCh','Tue,Fri','10:00','15:00',700),('Dr. Pooja Menon','Endocrinology','MBBS, DM','Wed,Sat','09:00','13:00',750),('Dr. Dev Patel','Gastroenterology','MBBS, DM','Mon,Wed,Fri','10:00','15:00',700),('Dr. Kavita Sethi','Pulmonology','MBBS, MD','Tue,Thu,Sat','09:00','14:00',600),('Dr. Nikhil Jain','Nephrology','MBBS, DM','Mon,Thu','10:00','15:00',750),('Dr. Ritu Sharma','Oncology','MBBS, MD','Tue,Fri','10:00','14:00',900),('Dr. Sameer Khan','Radiology','MBBS, MD','Mon-Fri','09:00','17:00',550),('Dr. Isha Roy','Nutrition','MSc Nutrition','Mon-Sat','10:00','16:00',350),('Dr. Arvind Nanda','General Surgery','MBBS, MS','Mon-Fri','09:00','13:00',650),('Dr. Tanya Gill','Physiotherapy','BPT, MPT','Mon-Sat','09:00','17:00',300),('Dr. Karan Bedi','Anesthesiology','MBBS, MD','Mon-Fri','09:00','15:00',600),('Dr. Leena Thomas','Pathology','MBBS, MD','Mon-Fri','09:00','16:00',400)]
+        for x in extras:
+            if not c.execute('SELECT 1 FROM doctors WHERE name=?',(x[0],)).fetchone(): c.execute('INSERT INTO doctors(name,department,qualification,days,start_time,end_time,consultation_fee) VALUES(?,?,?,?,?,?,?)',x)
+        meds=[('Ibuprofen','200 mg',18,'Tablet'),('Amoxicillin','250 mg',42,'Capsule'),('Azithromycin','500 mg',65,'Tablet'),('Metformin','500 mg',20,'Tablet'),('Amlodipine','5 mg',16,'Tablet'),('Losartan','50 mg',28,'Tablet'),('Omeprazole','20 mg',24,'Capsule'),('Pantoprazole','40 mg',32,'Tablet'),('Domperidone','10 mg',22,'Tablet'),('Ondansetron','4 mg',30,'Tablet'),('Dicyclomine','10 mg',26,'Tablet'),('Loperamide','2 mg',20,'Capsule'),('Loratadine','10 mg',18,'Tablet'),('Fexofenadine','120 mg',45,'Tablet'),('Montelukast','10 mg',38,'Tablet'),('Salbutamol','2 mg',24,'Tablet'),('Cough syrup','100 ml',75,'Drinkable'),('Calamine lotion','100 ml',58,'Other'),('Povidone iodine','100 ml',62,'Other'),('Chlorhexidine','100 ml',55,'Other'),('Cotton roll','100 g',35,'Other'),('Sterile gauze','10 pcs',28,'Other'),('Adhesive bandage','10 pcs',25,'Other'),('Crepe bandage','4 inch',45,'Other'),('Digital thermometer','Digital',120,'Other'),('ORS apple','1 sachet',24,'Sachet'),('Zinc sulfate','20 mg',14,'Tablet'),('Calcium carbonate','500 mg',32,'Tablet'),('Vitamin D3','60000 IU',35,'Capsule'),('Iron folic acid','Standard',18,'Tablet'),('B-complex','Standard',28,'Tablet'),('Multivitamin','Standard',55,'Tablet'),('Diclofenac gel','30 g',68,'Other'),('Mupirocin ointment','5 g',82,'Other'),('Clotrimazole cream','15 g',38,'Other'),('Terbinafine cream','10 g',75,'Other'),('Hydrocortisone cream','1%',42,'Other'),('Artificial tears','10 ml',65,'Drinkable'),('Normal saline','500 ml',35,'Drinkable'),('Dextrose solution','500 ml',48,'Drinkable'),('Sodium bicarbonate','500 mg',22,'Tablet'),('Levothyroxine','50 mcg',30,'Tablet'),('Atorvastatin','10 mg',34,'Tablet'),('Aspirin','75 mg',12,'Tablet'),('Clopidogrel','75 mg',40,'Tablet'),('Enalapril','5 mg',18,'Tablet'),('Bisoprolol','5 mg',25,'Tablet'),('Hydrochlorothiazide','12.5 mg',16,'Tablet'),('Gabapentin','100 mg',36,'Capsule'),('Pregabalin','75 mg',52,'Capsule'),('Cefixime','200 mg',58,'Tablet'),('Doxycycline','100 mg',32,'Capsule'),('Metronidazole','400 mg',26,'Tablet'),('Fluconazole','150 mg',35,'Capsule'),('Albendazole','400 mg',12,'Tablet'),('Chlorpheniramine','4 mg',10,'Tablet'),('Paracetamol syrup','60 ml',38,'Drinkable'),('Antacid suspension','170 ml',65,'Drinkable'),('Electrolyte powder','1 sachet',20,'Sachet'),('Petroleum jelly','100 g',48,'Other')]
+        for n,s,p,form in meds:
+            if not c.execute('SELECT 1 FROM medicines WHERE name=?',(n,)).fetchone(): c.execute('INSERT INTO medicines(name,strength,price,stock,dosage_form) VALUES(?,?,?,?,?)',(n,s,p,25,form))
+        if c.execute('SELECT COUNT(*) FROM beds').fetchone()[0]==0: c.executemany('INSERT INTO beds(bed_number,ward,bed_type,daily_rate) VALUES(?,?,?,?)',[(f'G-{i:02d}','General','General',800) for i in range(1,13)]+[(f'S-{i:02d}','Semi-private','Semi-private',1400) for i in range(1,9)]+[(f'P-{i:02d}','Private','Private',2200) for i in range(1,7)]+[(f'E-{i:02d}','Emergency','Emergency',1800) for i in range(1,5)])
         # Demo accounts: change these credentials and SECRET_KEY before any deployment.
         demo = [('Hospital Admin','admin@demo.local','admin123','admin'),
                 ('Reception Desk','reception@demo.local','reception123','reception'),
@@ -432,6 +443,86 @@ def add_medicine():
         with db() as c: c.execute('INSERT INTO medicines(name,strength,price,stock,dosage_form) VALUES(?,?,?,?,?)',(name,str(d.get('strength',''))[:60],price,stock,str(d.get('dosage_form','Tablet'))[:40]))
     except sqlite3.IntegrityError: return jsonify(error='Medicine already exists.'),409
     return jsonify(success=True),201
+
+@app.get('/api/bills')
+@login_required
+def get_bills():
+    u=current_user()
+    with db() as c:
+        sql="SELECT b.*,u.name patient_name FROM bills b JOIN users u ON u.id=b.patient_id ORDER BY b.id DESC" if u['role'] in ('admin','reception') else "SELECT * FROM bills WHERE patient_id=? ORDER BY id DESC"
+        rows=c.execute(sql,() if u['role'] in ('admin','reception') else (u['id'],)).fetchall()
+    return jsonify(bills=[dict(x) for x in rows])
+
+@app.post('/api/bills')
+@roles('admin','reception')
+def create_bill():
+    d=request.get_json(silent=True) or {}
+    try: pid=int(d.get('patient_id')); amount=round(float(d.get('amount')),2)
+    except Exception:return jsonify(error='Enter valid patient ID and amount.'),400
+    desc=str(d.get('description','')).strip()
+    if amount<=0 or not desc:return jsonify(error='Description and positive amount are required.'),400
+    with db() as c:
+        if not c.execute("SELECT 1 FROM users WHERE id=? AND role='patient'",(pid,)).fetchone():return jsonify(error='Patient not found.'),404
+        cur=c.execute("INSERT INTO bills(patient_id,description,amount) VALUES(?,?,?)",(pid,desc,amount))
+    return jsonify(success=True,bill_id=cur.lastrowid),201
+
+@app.post('/api/bills/<int:bill_id>/demo-payment')
+@login_required
+def demo_payment(bill_id):
+    u=current_user()
+    with db() as c:
+        bill=c.execute('SELECT * FROM bills WHERE id=?',(bill_id,)).fetchone()
+        if not bill:return jsonify(error='Bill not found.'),404
+        if u['role']=='patient' and bill['patient_id']!=u['id']:return jsonify(error='Not your bill.'),403
+        if u['role'] not in ('patient','admin','reception'):return jsonify(error='Not permitted.'),403
+        c.execute("UPDATE bills SET status='Paid (Demo)',paid_at=CURRENT_TIMESTAMP WHERE id=?",(bill_id,))
+    return jsonify(success=True,message='Demo payment recorded. No money was transferred.')
+
+@app.get('/api/beds')
+@login_required
+def get_beds():
+    with db() as c:rows=c.execute("SELECT b.*,bb.patient_id,bb.start_date,u.name patient_name FROM beds b LEFT JOIN bed_bookings bb ON bb.bed_id=b.id AND bb.status='Booked' LEFT JOIN users u ON u.id=bb.patient_id ORDER BY b.ward,b.bed_number").fetchall()
+    return jsonify(beds=[dict(x) for x in rows])
+
+@app.post('/api/beds/book')
+@roles('admin','reception')
+def book_bed():
+    d=request.get_json(silent=True) or {}
+    try:bid=int(d.get('bed_id'));pid=int(d.get('patient_id'));start=date.fromisoformat(d.get('start_date','')).isoformat()
+    except Exception:return jsonify(error='Choose bed, patient and admission date.'),400
+    with db() as c:
+        if not c.execute('SELECT 1 FROM beds WHERE id=?',(bid,)).fetchone():return jsonify(error='Bed not found.'),404
+        if c.execute("SELECT 1 FROM bed_bookings WHERE bed_id=? AND status='Booked'",(bid,)).fetchone():return jsonify(error='Bed is already reserved.'),409
+        if not c.execute("SELECT 1 FROM users WHERE id=? AND role='patient'",(pid,)).fetchone():return jsonify(error='Patient not found.'),404
+        c.execute("INSERT INTO bed_bookings(bed_id,patient_id,start_date) VALUES(?,?,?)",(bid,pid,start));c.execute("UPDATE beds SET status='Occupied' WHERE id=?",(bid,))
+    return jsonify(success=True),201
+
+@app.post('/api/medicines/<int:medicine_id>/purchase')
+@roles('admin','reception')
+def purchase_medicine_stock(medicine_id):
+    d=request.get_json(silent=True) or {}
+    try:q=int(d.get('quantity'));cost=float(d.get('cost') or 0)
+    except Exception:return jsonify(error='Enter valid quantity and cost.'),400
+    if q<=0 or cost<0:return jsonify(error='Quantity must be positive; cost cannot be negative.'),400
+    with db() as c:
+        if not c.execute('SELECT 1 FROM medicines WHERE id=?',(medicine_id,)).fetchone():return jsonify(error='Medicine not found.'),404
+        c.execute('UPDATE medicines SET stock=stock+?,updated_at=CURRENT_TIMESTAMP WHERE id=?',(q,medicine_id))
+        c.execute('INSERT INTO medicine_purchases(medicine_id,quantity,supplier,cost,purchased_by) VALUES(?,?,?,?,?)',(medicine_id,q,str(d.get('supplier',''))[:120],cost,current_user()['id']))
+    return jsonify(success=True)
+
+@app.get('/api/emergencies')
+@roles('admin','reception')
+def list_emergencies():
+    with db() as c:rows=c.execute('SELECT * FROM emergency_cases ORDER BY id DESC LIMIT 200').fetchall()
+    return jsonify(cases=[dict(x) for x in rows])
+
+@app.post('/api/emergencies')
+@roles('admin','reception','doctor')
+def create_emergency():
+    d=request.get_json(silent=True) or {};name=str(d.get('patient_name','')).strip();urg=str(d.get('urgency','Urgent'))
+    if not name or urg not in ('Critical','Urgent','Stable'):return jsonify(error='Enter patient name and urgency.'),400
+    with db() as c:cur=c.execute('INSERT INTO emergency_cases(patient_name,phone,urgency,description,created_by) VALUES(?,?,?,?,?)',(name,str(d.get('phone',''))[:30],urg,str(d.get('description',''))[:500],current_user()['id']))
+    return jsonify(success=True,case_id=cur.lastrowid),201
 
 @app.get('/api/records')
 @login_required
