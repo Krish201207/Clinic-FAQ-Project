@@ -145,6 +145,7 @@ def init_db():
         medicine_columns = {row['name'] for row in c.execute('PRAGMA table_info(medicines)')}
         if 'dosage_form' not in medicine_columns:
             c.execute("ALTER TABLE medicines ADD COLUMN dosage_form TEXT DEFAULT 'Tablet'")
+        c.execute("UPDATE medicines SET dosage_form='Drinkable' WHERE lower(name)='ors' AND dosage_form='Tablet'")
         user_columns = {row['name'] for row in c.execute('PRAGMA table_info(users)')}
         if 'doctor_profile_id' not in user_columns:
             c.execute('ALTER TABLE users ADD COLUMN doctor_profile_id INTEGER REFERENCES doctors(id)')
