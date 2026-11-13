@@ -578,7 +578,7 @@ def _extract_visit_reason(text):
 
 def _parse_chat_time(text):
     q=text.lower().replace('.', '')
-    if re.search(r'\b(before noon|in the morning|morning)\b', q):
+    if re.search(r'\b(before noon|in the morning|morning slot|morning appointment|this morning)\b', q):
         return 'BEFORE_NOON'
     m=re.search(r'\b(\d{1,2})(?::([0-5]\d))?\s*(am|pm)\b', q)
     if m:
@@ -777,7 +777,7 @@ def _chat_action(question, user):
                 slot = None
                 while candidate < end_of_window:
                     candidate_text = candidate.strftime('%H:%M')
-                    occupied = c.execute("SELECT 1 FROM appointments WHERE doctor_id=? AND appointment_date=? AND appointment_time=? AND status='Booked'", (doc['id'], day, candidate_text)).fetchone()
+                    occupied = c.execute("SELECT 1 FROM appointments WHERE doctor_id=? AND appointment_date=? AND appointment_time=?", (doc['id'], day, candidate_text)).fetchone()
                     if not occupied:
                         slot = candidate_text
                         break
