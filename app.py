@@ -529,10 +529,8 @@ def _parse_chat_date(text):
         delta = (target - today.weekday()) % 7
         if delta == 0:
             delta = 7
-        if re.search(r'\bnext\s+' + weekday_match.group(1) + r'\b', q):
-            delta = delta if delta > 0 else 7
-            if delta < 7:
-                delta += 7
+        # "Next Friday" means the next occurrence of Friday, not an
+        # unnecessary extra week when today is earlier in the same week.
         return (today + timedelta(days=delta)).isoformat()
 
     m = re.search(r'\b(20\d{2}-\d{2}-\d{2})\b', q)
@@ -739,6 +737,12 @@ def _chat_action(question, user):
             # Do not force patients to fill a form conversationally. Use safe,
             # predictable defaults for details they did not specify.
             if not selected and booking_words:
+                # Only use a general physician as a default when the patient
+                # did not name a specialty. Never silently substitute a
+                # different specialty for the one they requested.
+                named_specialty = any(alias in normalized for alias in department_aliases)
+                if named_specialty:
+                    return {'answer': 'I could not find an active doctor for that specialty in the clinic schedule. I can show the available doctors, or you can choose another specialty.'}
                 selected = next((d for d in doctors if 'general medicine' in d['department'].lower()), None)
                 if not selected and doctors:
                     selected = doctors[0]
@@ -746,8 +750,7 @@ def _chat_action(question, user):
             day = _parse_chat_date(q) or pending.get('appointment_date')
             slot = _parse_chat_time(q) or pending.get('appointment_time') or 'AUTO'
             reason = pending.get('reason', '') or _extract_visit_reason(q)
-            if not reason and booking_words:
-                reason = q[:300]
+            # Visit reason is optional; do not force a patient to invent one.
 
             selected = selected or next((d for d in doctors if d['id'] == pending.get('doctor_id')), None)
             if not selected:
