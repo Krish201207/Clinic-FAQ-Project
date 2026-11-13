@@ -553,7 +553,9 @@ def _parse_chat_date(text):
 def _looks_like_booking_request(text):
     q = re.sub(r'[^a-z0-9]+', ' ', text.lower()).strip()
     patterns = (
-        r'\b(book|booking|schedule|reserve)\b.*\b(appointment|visit|consultation|doctor|physician|specialist|cardiologist|dermatologist|orthopedic|orthopaedic)\b',
+        r'\b(book|booking|schedule|reserve)\b.*\b(appointment|visit|consultation|doctor|physician|specialist|cardiologist|dermatologist|orthopedic|orthopaedic|checkup|check up)\b',
+        r'\b(i need|i want|book me|schedule me)\b.*\b(cardiologist|cardiology|dermatologist|dermatology|orthopedic|orthopaedic|general physician|doctor|specialist)\b',
+        r'\b(book me|make me|schedule me)\b.*\b(for|with)\b.*\b(pain|rash|fever|cough|headache|injury|checkup)\b',
         r'\b(appointment|visit|consultation)\b.*\b(book|schedule|reserve|with)\b',
         r'\b(appointment|consultation)\s+with\b',
         r'\b(see|visit|consult|meet|talk to)\s+(a|an|the|my)?\s*(doctor|physician|specialist|cardiologist|dermatologist|orthopedic|orthopaedic)\b',
@@ -580,8 +582,10 @@ def _extract_visit_reason(text):
 
 def _parse_chat_time(text):
     q=text.lower().replace('.', '')
-    if re.search(r'\b(before noon|in the morning|morning slot|morning appointment|this morning)\b', q):
+    if re.search(r'\b(before noon|before lunch|in the morning|morning slot|morning appointment|this morning|early morning)\b', q):
         return 'BEFORE_NOON'
+    if re.search(r'\b(after noon|after lunch|in the afternoon|afternoon|evening)\b', q):
+        return 'AFTER_NOON'
     m=re.search(r'\b(\d{1,2})(?::([0-5]\d))?\s*(am|pm)\b', q)
     if m:
         h=int(m.group(1)); minute=int(m.group(2) or 0); mer=m.group(3)
@@ -732,61 +736,92 @@ def _chat_action(question, user):
             if not selected and pending.get('doctor_id'):
                 selected = next((d for d in doctors if d['id'] == pending['doctor_id']), None)
 
+            # Do not force patients to fill a form conversationally. Use safe,
+            # predictable defaults for details they did not specify.
+            if not selected and booking_words:
+                selected = next((d for d in doctors if 'general medicine' in d['department'].lower()), None)
+                if not selected and doctors:
+                    selected = doctors[0]
+
             day = _parse_chat_date(q) or pending.get('appointment_date')
-            slot = _parse_chat_time(q) or pending.get('appointment_time')
-            reason = pending.get('reason', '')
-            if not reason:
-                reason = _extract_visit_reason(q)
-            if (not reason and pending.get('awaiting_reason') and not booking_words
-                    and not _parse_chat_date(q) and not _parse_chat_time(q)
-                    and not any(doc['name'].lower() in low or doc['department'].lower() in low for doc in doctors)):
+            slot = _parse_chat_time(q) or pending.get('appointment_time') or 'AUTO'
+            reason = pending.get('reason', '') or _extract_visit_reason(q)
+            if not reason and booking_words:
                 reason = q[:300]
 
+            selected = selected or next((d for d in doctors if d['id'] == pending.get('doctor_id')), None)
+            if not selected:
+                return {'answer': 'There are no active doctors in the clinic schedule, so I cannot book an appointment right now.'}
+
+            # If no date was supplied, choose the nearest future working day
+            # for the selected doctor. If a weekday was specified, respect it.
+            week = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+            schedule = selected['days']
+            if '-' in schedule:
+                first, last = schedule.split('-', 1)
+                allowed = week[week.index(first):week.index(last)+1] if first in week and last in week else []
+            else:
+                allowed = [x.strip() for x in schedule.split(',')]
+            if not day:
+                for offset in range(1, 15):
+                    candidate_day = date.today() + timedelta(days=offset)
+                    if candidate_day.strftime('%a') in allowed:
+                        day = candidate_day.isoformat()
+                        break
+            if not day:
+                return {'answer': f"I couldn't find a working day for {selected['name']} in the next two weeks. Please contact reception."}
+
+            try:
+                appt_day = date.fromisoformat(day)
+            except ValueError:
+                return {'answer': 'I could not understand the requested date. Try saying a weekday such as Friday.'}
+            if appt_day <= date.today():
+                return {'answer': 'That date has passed. I can use the next occurrence of that weekday instead—would you like me to do that?'}
+
+            if appt_day.strftime('%a') not in allowed:
+                return {'answer': f"{selected['name']} is not scheduled on {appt_day.strftime('%A')}. Their listed days are {selected['days']}. I can find the nearest day they are working instead if you prefer."}
+
+            # Resolve vague time windows or choose the earliest free slot when
+            # the patient has not expressed a time preference.
+            start = datetime.strptime(selected['start_time'], '%H:%M')
+            finish = datetime.strptime(selected['end_time'], '%H:%M')
+            if slot == 'BEFORE_NOON':
+                start = max(start, datetime.strptime('08:00', '%H:%M'))
+                finish = min(finish, datetime.strptime('12:00', '%H:%M'))
+            elif slot == 'AFTER_NOON':
+                start = max(start, datetime.strptime('12:00', '%H:%M'))
+            elif slot == 'AUTO':
+                pass
+            else:
+                try:
+                    datetime.strptime(slot, '%H:%M')
+                except (TypeError, ValueError):
+                    return {'answer': 'I could not understand that time. You can say morning, afternoon, or a time such as 10:30 AM.'}
+                start = datetime.strptime(slot, '%H:%M')
+                finish = start + timedelta(minutes=1)
+
+            slot = None
+            candidate = start
+            while candidate < finish:
+                candidate_text = candidate.strftime('%H:%M')
+                occupied = c.execute(
+                    "SELECT 1 FROM appointments WHERE doctor_id=? AND appointment_date=? AND appointment_time=? AND status='Booked'",
+                    (selected['id'], day, candidate_text)
+                ).fetchone()
+                if not occupied:
+                    slot = candidate_text
+                    break
+                candidate += timedelta(minutes=30)
+            if not slot:
+                window = 'before noon' if _parse_chat_time(q) == 'BEFORE_NOON' else ('after noon' if _parse_chat_time(q) == 'AFTER_NOON' else 'during the working day')
+                return {'answer': f"No free appointment slot is available for {selected['name']} {window} on {day}. I can look at their next working day instead."}
+
             pending = {
-                'doctor_id': selected['id'] if selected else pending.get('doctor_id'),
+                'doctor_id': selected['id'],
                 'appointment_date': day,
                 'appointment_time': slot,
                 'reason': reason
             }
-            selected = next((d for d in doctors if d['id'] == pending['doctor_id']), None)
-            missing = []
-            if not selected: missing.append('doctor or department')
-            if not day: missing.append('date (for example, tomorrow or Friday)')
-            if not slot: missing.append('time (for example, 10:30 AM)')
-            if missing:
-                pending['awaiting_reason'] = not bool(reason)
-                session['chat_booking'] = pending
-                doctor_lines = '; '.join(
-                    f"{d['name']} ({d['department']}, {d['days']} {d['start_time']}-{d['end_time']})"
-                    for d in doctors
-                )
-                prompts = []
-                if not selected: prompts.append('which doctor or specialty you prefer')
-                if not day: prompts.append('what day you want to come')
-                if not slot: prompts.append('what time you prefer')
-                if not reason: prompts.append('what you want the doctor to check')
-                return {'answer': (
-                    "Please provide " + '; '.join(prompts) +
-                    ". You can answer naturally, for example: “A skin doctor, next Friday, around 11 AM. I have a rash.” "
-                    "Available doctors: " + doctor_lines + "."
-                )}
-
-            doc = selected
-            if slot == 'BEFORE_NOON':
-                candidate = datetime.strptime(doc['start_time'], '%H:%M')
-                noon = datetime.strptime('12:00', '%H:%M')
-                end_of_window = min(datetime.strptime(doc['end_time'], '%H:%M'), noon)
-                slot = None
-                while candidate < end_of_window:
-                    candidate_text = candidate.strftime('%H:%M')
-                    occupied = c.execute("SELECT 1 FROM appointments WHERE doctor_id=? AND appointment_date=? AND appointment_time=?", (doc['id'], day, candidate_text)).fetchone()
-                    if not occupied:
-                        slot = candidate_text
-                        break
-                    candidate += timedelta(minutes=30)
-                if not slot:
-                    session['chat_booking'] = pending
-                    return {'answer': f"There are no available appointments for {doc['name']} before noon on {day}. Choose another date or time."}
 
             try:
                 appt_day = date.fromisoformat(day)
