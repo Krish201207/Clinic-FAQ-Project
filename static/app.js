@@ -19,7 +19,7 @@ async function loadPriceList(){const box=$('#assistant-price-list');if(!box)retu
 $('#refresh-history')?.addEventListener('click',()=>loadChatHistory().catch(notify));
 $('#reload-prices')?.addEventListener('click',()=>loadPriceList().catch(notify));
 async function loadAnalytics(){const d=await api('/api/analytics');$('#analytics-summary').innerHTML=[['Total chatbot queries',d.total_queries],['Appointments',d.appointments],['Registered patients',d.patients]].map(x=>`<article><span>${x[0]}</span><strong>${x[1]}</strong></article>`).join('');$('#topic-list').innerHTML=d.topics.map(x=>`<article><b>${esc(x.label)}</b><strong>${x.count}</strong></article>`).join('')||'<p>No query data yet.</p>';$('#category-list').innerHTML=d.categories.map(x=>`<article><b>${esc(x.label)}</b><strong>${x.count}</strong></article>`).join('')||'<p>No classifications yet.</p>'}
-function loadTab(id){const map={doctors:loadDoctors,appointments:loadAppointments,records:loadRecords,medicines:loadMedicines,analytics:loadAnalytics,history:loadChatHistory,assistant:loadPriceList};if(map[id])map[id]().catch(notify)}
+function loadTab(id){const map={doctors:loadDoctors,appointments:loadAppointments,records:loadRecords,medicines:loadMedicines,analytics:loadAnalytics,history:loadChatHistory,assistant:loadPriceList,payments:loadBills,beds:loadBeds,emergency:loadEmergencies};if(map[id])map[id]().catch(notify)}
 
 // Executive dashboard enhancements: live KPIs, workspace search and theme controls.
 async function loadDashboardMetrics(){
@@ -74,9 +74,21 @@ refreshButton?.addEventListener('click', async () => {
 
 // Only load modules the signed-in role is allowed to access.
 (async function initialLoad() {
-  const tasks = [loadDoctors(), loadAppointments(), loadMedicines(), loadPriceList(), loadChatContext()];
+  const tasks = [loadDoctors(), loadAppointments(), loadMedicines(), loadPriceList(), loadChatContext(), loadBills(), loadBeds()]; if(['admin','reception'].includes(window.clinic_ROLE)) tasks.push(loadEmergencies());
   
   if (['patient', 'doctor', 'admin'].includes(window.HOSPITAL_ROLE)) tasks.push(loadRecords());
   try { await Promise.all(tasks); }
   catch (error) { notify(error); }
 })();
+
+
+let currentDemoBill=null;
+async function loadBills(){if(!document.getElementById('bills-list'))return;const d=await api('/api/bills');$('#bills-list').innerHTML=(d.bills||[]).map(b=>'<article><div><b>Bill #'+b.id+' · '+esc(b.description)+'</b><small>'+(b.patient_name?'Patient: '+esc(b.patient_name)+' · ':'')+money(b.amount)+' · '+esc(b.status)+'</small><small>'+esc(b.created_at)+'</small></div>'+(b.status==='Unpaid'?'<button onclick="showDemoQR('+b.id+','+Number(b.amount)+')">Show demo QR</button>':'')+'</article>').join('')||'<p>No bills found.</p>'}
+window.showDemoQR=(id,amount)=>{currentDemoBill=id;const payload='CLINIC-FAQ-DEMO|BILL:'+id+'|AMOUNT:'+amount.toFixed(2)+'|NO-REAL-UPI-PAYMENT';$('#qr-payload').textContent=payload;$('#qr-code').innerHTML='';if(window.QRCode)new QRCode($('#qr-code'),{text:payload,width:190,height:190});else $('#qr-code').textContent='QR generator unavailable';$('#payment-qr-modal').hidden=false};
+$('#close-qr')?.addEventListener('click',()=>$('#payment-qr-modal').hidden=true);
+$('#confirm-demo-payment')?.addEventListener('click',async()=>{if(!currentDemoBill)return;try{const d=await api('/api/bills/'+currentDemoBill+'/demo-payment',{method:'POST',body:JSON.stringify({})});alert(d.message);$('#payment-qr-modal').hidden=true;loadBills()}catch(e){notify(e)}});
+$('#bill-form')?.addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/bills',{method:'POST',body:JSON.stringify({patient_id:$('#bill-patient').value,description:$('#bill-description').value,amount:$('#bill-amount').value})});e.target.reset();loadBills()}catch(x){notify(x)}});
+async function loadBeds(){if(!$('#beds-list'))return;const d=await api('/api/beds');$('#beds-list').innerHTML=d.beds.map(b=>'<article><div><b>'+esc(b.bed_number)+' · '+esc(b.ward)+'</b><small>'+esc(b.bed_type)+' · '+money(b.daily_rate)+' / day</small><small>'+(b.patient_name?'Patient: '+esc(b.patient_name):'Available')+'</small></div><span class="stock-pill '+(b.status==='Available'?'in-stock':'out-stock')+'">'+esc(b.status)+'</span></article>').join('');if($('#bed-select'))$('#bed-select').innerHTML=d.beds.filter(b=>b.status==='Available').map(b=>'<option value="'+b.id+'">'+esc(b.bed_number)+' — '+esc(b.ward)+'</option>').join('')}
+$('#bed-form')?.addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/beds/book',{method:'POST',body:JSON.stringify({bed_id:$('#bed-select').value,patient_id:$('#bed-patient').value,start_date:$('#bed-date').value})});e.target.reset();loadBeds()}catch(x){notify(x)}});
+async function loadEmergencies(){if(!$('#emergency-list'))return;const d=await api('/api/emergencies');$('#emergency-list').innerHTML=d.cases.map(x=>'<article><div><b>Case #'+x.id+' · '+esc(x.patient_name)+'</b><small>'+esc(x.urgency)+' · '+esc(x.phone)+' · '+esc(x.created_at)+'</small><small>'+esc(x.description)+'</small></div><span class="stock-pill out-stock">'+esc(x.status)+'</span></article>').join('')||'<p>No cases recorded.</p>'}
+$('#emergency-form')?.addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/emergencies',{method:'POST',body:JSON.stringify({patient_name:$('#em-name').value,phone:$('#em-phone').value,urgency:$('#em-urgency').value,description:$('#em-description').value})});e.target.reset();loadEmergencies()}catch(x){notify(x)}});
