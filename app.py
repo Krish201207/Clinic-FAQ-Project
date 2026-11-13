@@ -771,9 +771,11 @@ def _chat_action(question, user):
             selected = None
             department_aliases = {
                 'cardiologist': 'cardiology', 'heart doctor': 'cardiology',
-                'dermatologist': 'dermatology', 'skin doctor': 'dermatology',\n                'skin specialist': 'dermatology', 'skin': 'dermatology',
+                'dermatologist': 'dermatology', 'skin doctor': 'dermatology',
+                'skin specialist': 'dermatology', 'skin': 'dermatology',
                 'orthopedic': 'orthopedics', 'orthopaedic': 'orthopedics',
-                'bone doctor': 'orthopedics', 'bone specialist': 'orthopedics',\n                'general physician': 'general medicine', 'family doctor': 'general medicine',
+                'bone doctor': 'orthopedics', 'bone specialist': 'orthopedics',
+                'general physician': 'general medicine', 'family doctor': 'general medicine',
                 'physician': 'general medicine'
             }
             normalized = low
