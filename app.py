@@ -554,15 +554,14 @@ def payment_test_page(bill_id):
         if not bill:return 'Bill not found',404
         if u['role']=='patient' and bill['patient_id']!=u['id']:return 'Not your bill',403
         if u['role'] not in ('patient','admin','reception'):return 'Not permitted',403
-        if request.method=='POST':
+        if bill['status']=='Unpaid':
             c.execute("UPDATE bills SET status='Paid - Test',paid_at=CURRENT_TIMESTAMP WHERE id=?",(bill_id,))
             status='Paid - Test'
-        else: status=bill['status']
-    page="""<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Clinic payment</title>
-    <style>body{font:16px Arial;background:#f3f7f8;color:#203640;display:grid;place-items:center;min-height:100vh;margin:0}.card{background:white;padding:28px;border-radius:14px;max-width:420px;width:calc(100% - 56px);box-shadow:0 8px 28px #12344a18}h2{margin-top:0}small{color:#71838a}.amount{font-size:30px;font-weight:700;margin:16px 0}button{background:#138b83;color:white;border:0;border-radius:8px;padding:12px 18px;font-weight:700;cursor:pointer}</style>
-    <main class="card"><h2>Clinic payment</h2><small>Bill #{{ bill.id }} · {{ bill.description }}</small><div class="amount">₹{{ '%.2f'|format(bill.amount) }}</div>
-    {% if status == 'Unpaid' %}<p>Confirm this test payment to update the bill status.</p><form method="post"><button type="submit">Confirm payment test</button></form>
-    {% else %}<p>Payment status: <b>{{ status }}</b></p>{% endif %}<p><small>This is a payment test page. No bank or UPI transaction is processed.</small></p></main></html>"""
+        else:
+            status=bill['status']
+    page="""<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Payment status</title>
+    <style>body{font:16px Arial;background:#f3f7f8;color:#203640;display:grid;place-items:center;min-height:100vh;margin:0}.card{background:white;padding:30px;border-radius:16px;max-width:420px;width:calc(100% - 60px);box-shadow:0 8px 28px #12344a18;text-align:center}.check{width:64px;height:64px;border-radius:50%;background:#e4f7ed;color:#16834a;display:grid;place-items:center;font-size:36px;margin:0 auto 18px}.amount{font-size:30px;font-weight:700;margin:18px 0}small{color:#71838a}.status{font-weight:700;color:#16834a}a{display:inline-block;margin-top:22px;color:#087d75;text-decoration:none;font-weight:700}</style>
+    <main class="card"><div class="check">✓</div><h2>Payment completed</h2><p class="status">Payment recorded successfully</p><small>Bill #{{ bill.id }} · {{ bill.description }}</small><div class="amount">₹{{ '%.2f'|format(bill.amount) }}</div><p>Bill status: <b>{{ status }}</b></p><p><small>Simulated QR payment for project testing. No bank or UPI transaction was processed.</small></p><a href="{{ url_for('dashboard') }}">Return to clinic dashboard</a></main></html>"""
     return render_template_string(page,bill=bill,status=status)
 
 @app.post('/api/medicines/<int:medicine_id>/purchase')
