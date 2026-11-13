@@ -8,6 +8,12 @@ async function loadMedicines(){const d=await api('/api/medicines?q='+encodeURICo
 async function loadRecords(){const d=await api('/api/records');$('#records-list').innerHTML=d.records.map(x=>`<article><div><b>${esc(x.record_type)}</b><small>${x.patient_name?'Patient: '+esc(x.patient_name)+' · ':''}${esc(x.created_at)}</small><small>${esc(x.notes)}</small>${x.file_name?`<a href="/uploads/${encodeURIComponent(x.file_name)}">Download attachment</a>`:''}</div></article>`).join('')||'<p>No records available.</p>'}
 if($('#record-form'))$('#record-form').addEventListener('submit',async e=>{e.preventDefault();try{const r=await fetch('/api/records',{method:'POST',credentials:'same-origin',body:new FormData(e.target)});const d=await r.json();if(!r.ok)throw Error(d.error);e.target.reset();loadRecords()}catch(x){notify(x)}});
 if($('#chat-form'))$('#chat-form').addEventListener('submit',async e=>{e.preventDefault();const q=$('#chat-question').value.trim();if(!q)return;const log=$('#chat-log');log.insertAdjacentHTML('beforeend',`<div class="mine">${esc(q)}</div>`);$('#chat-question').value='';try{const d=await api('/ask',{method:'POST',body:JSON.stringify({question:q})});log.insertAdjacentHTML('beforeend',`<div class="bot">${esc(d.answer)}</div>`);loadChatHistory().catch(()=>{})}catch(x){log.insertAdjacentHTML('beforeend',`<div class="bot">${esc(x.message)}</div>`)}log.scrollTop=log.scrollHeight});
+async function loadChatContext(){
+  const log=$('#chat-log');if(!log)return;
+  const d=await api('/api/chat-context');
+  log.innerHTML=(d.messages||[]).map(x=>`<div class="mine">${esc(x.question)}</div><div class="bot">${esc(x.answer)}</div>`).join('')||'<div class="bot">Welcome to Clinic FAQ Project. Ask about clinic services, doctors, appointments, or available medicines.</div>';
+  log.scrollTop=log.scrollHeight;
+}
 async function loadChatHistory(){const box=$('#history-list');if(!box)return;const d=await api('/api/chat-history');box.innerHTML=(d.history||[]).map(x=>{const category=String(x.classification||'UNAVAILABLE').toUpperCase();const cls=category.toLowerCase();return `<article class="history-entry"><div class="history-topline"><small>${esc(x.created_at)} · ${esc(x.topic)}</small><span class="classification-badge ${cls}">${esc(category)}</span></div><div class="history-label">USER QUESTION</div><b class="history-text">${esc(x.question)}</b><div class="history-label">ASSISTANT RESPONSE</div><p class="history-text">${esc(x.answer)}</p></div></article>`}).join('')||'<p>No saved conversations yet. Start a conversation in Patient help desk.</p>'}
 async function loadPriceList(){const box=$('#assistant-price-list');if(!box)return;const d=await api('/api/price-list');const serviceCards=(d.services||[]).map(x=>`<article class="price-card"><span>${esc(x.department)}</span><b>${esc(x.name)}</b><strong>${money(x.price)}</strong><small>${esc(x.description)}</small></article>`).join('');const doctorCards=(d.doctors||[]).map(x=>`<article class="price-card doctor-price"><span>${esc(x.department)}</span><b>${esc(x.name)}</b><strong>${money(x.price)}</strong><small>Consultation fee</small></article>`).join('');const medicineCards=(d.medicines||[]).map(x=>`<article class="price-card medicine-price"><span>Pharmacy</span><b>${esc(x.name)} ${esc(x.strength)}</b><strong>${money(x.price)}</strong><small>${Number(x.stock)>0?'Listed stock: '+Number(x.stock):'Out of stock'}</small></article>`).join('');box.innerHTML=serviceCards+doctorCards+medicineCards||'<p>No prices have been configured.</p>'}
 $('#refresh-history')?.addEventListener('click',()=>loadChatHistory().catch(notify));
@@ -68,7 +74,7 @@ refreshButton?.addEventListener('click', async () => {
 
 // Only load modules the signed-in role is allowed to access.
 (async function initialLoad() {
-  const tasks = [loadDoctors(), loadAppointments(), loadMedicines(), loadPriceList()];
+  const tasks = [loadDoctors(), loadAppointments(), loadMedicines(), loadPriceList(), loadChatContext()];
   
   if (['patient', 'doctor', 'admin'].includes(window.HOSPITAL_ROLE)) tasks.push(loadRecords());
   try { await Promise.all(tasks); }
