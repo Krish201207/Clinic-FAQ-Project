@@ -132,6 +132,8 @@ def init_db():
           price REAL NOT NULL DEFAULT 0, description TEXT DEFAULT '', active INTEGER DEFAULT 1);
         ''')
         bill_columns = {row['name'] for row in c.execute('PRAGMA table_info(bills)')}
+        if 'payment_token' not in bill_columns:
+            c.execute("ALTER TABLE bills ADD COLUMN payment_token TEXT DEFAULT ''")
         if 'paid_at' not in bill_columns:
             c.execute("ALTER TABLE bills ADD COLUMN paid_at TEXT DEFAULT ''")
         if c.execute('SELECT COUNT(*) FROM hospital_services').fetchone()[0] == 0:
@@ -553,6 +555,49 @@ def test_payment(bill_id):
         c.execute("UPDATE bills SET status='Paid - Test',paid_at=CURRENT_TIMESTAMP WHERE id=?",(bill_id,))
     return jsonify(success=True,message='Test payment recorded. No real payment was processed.')
 
+@app.post('/api/bills/<int:bill_id>/qr')
+@login_required
+def create_bill_qr(bill_id):
+    u=current_user()
+    if u['role'] not in ('patient','admin','reception'):
+        return jsonify(error='Not permitted.'),403
+    token=uuid.uuid4().hex + uuid.uuid4().hex
+    with db() as c:
+        bill=c.execute('SELECT * FROM bills WHERE id=?',(bill_id,)).fetchone()
+        if not bill:return jsonify(error='Bill not found.'),404
+        if u['role']=='patient' and bill['patient_id']!=u['id']:return jsonify(error='Not your bill.'),403
+        if bill['status']!='Unpaid':return jsonify(error='This bill is no longer unpaid.'),409
+        c.execute('UPDATE bills SET payment_token=? WHERE id=?',(token,bill_id))
+    return jsonify(url=url_for('scan_payment',token=token,_external=True))
+
+@app.route('/payment/scan/<token>', methods=['GET','POST'])
+def scan_payment(token):
+    decision=request.form.get('decision','')
+    result='confirm'
+    with db() as c:
+        bill=c.execute("SELECT b.*,u.name patient_name FROM bills b JOIN users u ON u.id=b.patient_id WHERE b.payment_token=?",(token,)).fetchone()
+        if not bill:return 'Payment link not found or expired.',404
+        if request.method=='POST':
+            if decision=='yes' and bill['status']=='Unpaid':
+                c.execute("UPDATE bills SET status='Paid - Test',paid_at=CURRENT_TIMESTAMP WHERE id=?",(bill['id'],))
+                result='success'
+            elif decision=='no':
+                result='cancelled'
+            elif bill['status']!='Unpaid':
+                result='success' if bill['status']=='Paid - Test' else 'already-paid'
+        status='Paid - Test' if result=='success' else bill['status']
+    page="""<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Confirm payment</title>
+    <style>body{font:16px Arial;background:#f3f7f8;color:#203640;display:grid;place-items:center;min-height:100vh;margin:0}.card{background:white;padding:30px;border-radius:16px;max-width:440px;width:calc(100% - 60px);box-shadow:0 8px 28px #12344a18;text-align:center}.mark{width:64px;height:64px;border-radius:50%;background:#e4f3f7;color:#147d83;display:grid;place-items:center;font-size:30px;margin:0 auto 18px}.amount{font-size:30px;font-weight:700;margin:18px 0}small{color:#71838a}.status{font-weight:700;color:#16834a}.actions{display:flex;gap:12px;justify-content:center;margin-top:24px}.actions button{border:0;border-radius:9px;padding:12px 28px;font-weight:700;font-size:15px;cursor:pointer}.yes{background:#087f82;color:white}.no{background:#edf1f3;color:#425963}a{display:inline-block;margin-top:22px;color:#087d75;text-decoration:none;font-weight:700}</style>
+    <main class="card"><div class="mark">{% if result == 'success' %}✓{% elif result == 'cancelled' %}×{% else %}₹{% endif %}</div>
+    {% if result == 'success' %}<h2>Payment successful</h2><p class="status">Payment confirmed successfully.</p>
+    {% elif result == 'cancelled' %}<h2>Payment cancelled</h2><p>The bill remains unpaid.</p>
+    {% elif status != 'Unpaid' %}<h2>Bill already processed</h2><p class="status">Current status: {{ status }}</p>
+    {% else %}<h2>Confirm payment?</h2><p>Do you want to confirm this payment?</p>{% endif %}
+    <small>Bill #{{ bill.id }} · {{ bill.description }}</small><div class="amount">₹{{ '%.2f'|format(bill.amount) }}</div>
+    {% if result == 'confirm' and status == 'Unpaid' %}<form method="post" class="actions"><button class="yes" name="decision" value="yes">Yes</button><button class="no" name="decision" value="no">No</button></form>{% endif %}
+    <a href="{{ url_for('login') }}">Back to sign in</a></main></html>"""
+    return render_template_string(page,bill=bill,status=status,result=result)
+
 @app.route('/payment/test/<int:bill_id>', methods=['GET','POST'])
 @login_required
 def payment_test_page(bill_id):
@@ -810,6 +855,7 @@ def _chat_action(question, user):
         'test price', 'show prices', 'show fees', 'rate list'
     ))
     medicine_intent = any(x in low for x in ('medicine', 'medicines', 'pharmacy', 'stock', 'price of'))
+    order_intent = bool(re.search(r'\b(order|buy|purchase|get me|pick up|pickup)\b', low))
 
     with db() as c:
         doctors = [dict(x) for x in c.execute(
@@ -860,6 +906,91 @@ def _chat_action(question, user):
             lines.extend(f"{r['name']} ({r['department']}) — ₹{r['consultation_fee']:.2f}" for r in doctor_fees)
             lines.append('Medicine prices are available in the Medicine inventory section. Confirm charges with reception before payment.')
             return {'answer': '\n'.join(lines)}
+
+        # Conversational medicine ordering: gather details, show a summary, and
+        # create the reservation and bill only after the patient confirms.
+        pending_order = session.get('chat_medicine_order')
+        yes_reply = low.strip(" .!?") in ('yes','yes please','confirm','confirm order','place order','do it','okay','ok')
+        no_reply = low.strip(" .!?") in ('no','no thanks','cancel','cancel order','stop')
+        if (order_intent or pending_order) and user['role'] == 'patient':
+            catalog = [dict(r) for r in c.execute(
+                'SELECT id,name,strength,price,stock FROM medicines WHERE stock>0 ORDER BY name'
+            ).fetchall()]
+            if no_reply and pending_order:
+                session.pop('chat_medicine_order', None)
+                return {'answer': 'Okay, I cancelled that medicine order. Nothing was reserved and no bill was created.'}
+            if pending_order and pending_order.get('stage') == 'confirm':
+                if yes_reply:
+                    med = next((m for m in catalog if m['id'] == pending_order.get('medicine_id')), None)
+                    if not med:
+                        session.pop('chat_medicine_order', None)
+                        return {'answer': 'That item is no longer available. Please start the order again.'}
+                    qty = int(pending_order['quantity'])
+                    if med['stock'] < qty:
+                        session.pop('chat_medicine_order', None)
+                        return {'answer': f"Only {med['stock']} units of {med['name']} remain. Please start again with a lower quantity."}
+                    total = round(float(med['price'] or 0) * qty, 2)
+                    pickup_day = date.fromisoformat(pending_order['pickup_date'])
+                    pickup_time = pending_order['pickup_time']
+                    c.execute('UPDATE medicines SET stock=stock-?,updated_at=CURRENT_TIMESTAMP WHERE id=?', (qty, med['id']))
+                    order_id = c.execute(
+                        'INSERT INTO medicine_orders(patient_id,medicine_id,quantity,pickup_date,pickup_time) VALUES(?,?,?,?,?)',
+                        (user['id'], med['id'], qty, pickup_day.isoformat(), pickup_time)
+                    ).lastrowid
+                    description = f"Medicine order #{order_id}: {med['name']} {med['strength'] or ''} × {qty}".strip()
+                    bill_id = c.execute(
+                        'INSERT INTO bills(patient_id,description,amount) VALUES(?,?,?)',
+                        (user['id'], description, total)
+                    ).lastrowid
+                    session.pop('chat_medicine_order', None)
+                    return {'answer': f"Order placed. {med['name']} × {qty} is reserved for pickup on {pickup_day.strftime('%d %b %Y')} at {pickup_time}. Total: ₹{total:.2f}. Bill #{bill_id} is now in Due payments."}
+                return {'answer': 'Please reply Yes to place this order or No to cancel it.'}
+            pending_order = pending_order or {}
+            selected = next((m for m in catalog if m['name'].lower() in low), None)
+            if selected:
+                pending_order['medicine_id'] = selected['id']
+            elif pending_order.get('medicine_id'):
+                selected = next((m for m in catalog if m['id'] == pending_order['medicine_id']), None)
+            if not selected:
+                if order_intent and catalog:
+                    session['chat_medicine_order'] = {'stage':'details'}
+                    return {'answer': 'Which medicine should I order? Available items include: ' + ', '.join(m['name'] for m in catalog[:12]) + '. Type the medicine name.'}
+                session.pop('chat_medicine_order', None)
+                return {'answer': 'I could not match that medicine to an in-stock catalogue item. Please check the Pharmacy section for available names.'}
+            residue = low.replace(selected['name'].lower(), ' ')
+            if selected['strength']:
+                residue = residue.replace(str(selected['strength']).lower(), ' ')
+            qty = pending_order.get('quantity')
+            quantity_match = re.search(r'\b(?:quantity\s*)?(\d+)\b|\b(one|a|an|two|couple|pair|three|few|four|five)\b', residue)
+            if quantity_match:
+                raw_qty = quantity_match.group(1) or quantity_match.group(2)
+                words = {'one':1,'a':1,'an':1,'two':2,'couple':2,'pair':2,'three':3,'few':3,'four':4,'five':5}
+                qty = int(raw_qty) if raw_qty.isdigit() else words.get(raw_qty, qty)
+            if not qty:
+                qty = 1
+            if qty < 1 or qty > 100:
+                return {'answer': 'Please choose a quantity between 1 and 100.'}
+            if selected['stock'] < qty:
+                return {'answer': f"Only {selected['stock']} units of {selected['name']} are currently available. Choose a smaller quantity."}
+            pickup_day = _parse_chat_date(q) or pending_order.get('pickup_date')
+            pickup_slot = _parse_chat_time(q) or pending_order.get('pickup_time')
+            if pickup_slot == 'BEFORE_NOON':
+                pickup_slot = '10:00'
+            elif pickup_slot == 'AFTER_NOON':
+                pickup_slot = '14:00'
+            if not pickup_day:
+                pickup_day = (date.today() + timedelta(days=1)).isoformat()
+            if date.fromisoformat(pickup_day) < date.today():
+                return {'answer': 'That pickup date has passed. Please give a future date, such as tomorrow or Friday.'}
+            if not pickup_slot:
+                pickup_slot = '10:00'
+            pending_order = {'stage':'confirm','medicine_id':selected['id'],'quantity':qty,'pickup_date':pickup_day,'pickup_time':pickup_slot}
+            session['chat_medicine_order'] = pending_order
+            total = round(float(selected['price'] or 0) * qty, 2)
+            return {'answer': f"Please confirm this order: {selected['name']} {selected['strength'] or ''} × {qty}; pickup {date.fromisoformat(pickup_day).strftime('%d %b %Y')} at {pickup_slot}; total ₹{total:.2f}. Reply Yes to place it or No to cancel."}
+
+        if order_intent and user['role'] != 'patient':
+            return {'answer': 'Medicine pickup orders through the assistant are available to patient accounts. Staff can manage orders in the Pharmacy section.'}
 
         if medicine_intent:
             term = re.sub(r'\b(medicine|medicines|pharmacy|stock|price|prices|of|do|you|have|search|find|show|list|and)\b', '', low).strip(' ?.,')
