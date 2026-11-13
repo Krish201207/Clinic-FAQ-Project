@@ -723,6 +723,48 @@ def download_dues_excel():
     output=io.BytesIO(); workbook.save(output); output.seek(0)
     return send_file(output,mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',as_attachment=True,download_name='outstanding_dues.xlsx')
 
+@app.get('/api/reports/bills-history.xlsx')
+@roles('admin','reception')
+def download_bills_history_excel():
+    workbook=Workbook()
+    sheet=workbook.active
+    sheet.title='Billing History'
+    sheet.append(['Bill ID','Patient ID','Patient Name','Description','Amount (INR)','Payment Status','Bill Created At','Paid At'])
+    with db() as c:
+        rows=c.execute("""
+            SELECT b.id,b.patient_id,u.name patient_name,b.description,b.amount,
+                   b.status,b.created_at,b.paid_at
+            FROM bills b
+            JOIN users u ON u.id=b.patient_id
+            ORDER BY b.created_at DESC,b.id DESC
+        """).fetchall()
+    for row in rows:
+        sheet.append([row['id'],row['patient_id'],row['patient_name'],row['description'],
+                      row['amount'],row['status'],row['created_at'],row['paid_at'] or ''])
+    sheet.freeze_panes='A2'
+    sheet.auto_filter.ref=sheet.dimensions
+    for column,width in {'A':12,'B':14,'C':24,'D':36,'E':18,'F':20,'G':22,'H':22}.items():
+        sheet.column_dimensions[column].width=width
+
+    summary=workbook.create_sheet('Summary')
+    summary.append(['Billing History Summary','Value'])
+    summary.append(['Total bills',len(rows)])
+    summary.append(['Paid bills',sum(1 for row in rows if str(row['status']).lower().startswith('paid'))])
+    summary.append(['Unpaid bills',sum(1 for row in rows if str(row['status']).lower()=='unpaid')])
+    summary.append(['Total billed (INR)',sum(float(row['amount'] or 0) for row in rows)])
+    summary.append(['Paid amount (INR)',sum(float(row['amount'] or 0) for row in rows if str(row['status']).lower().startswith('paid'))])
+    summary.append(['Outstanding amount (INR)',sum(float(row['amount'] or 0) for row in rows if str(row['status']).lower()=='unpaid')])
+    summary.column_dimensions['A'].width=28
+    summary.column_dimensions['B'].width=20
+    summary.freeze_panes='A2'
+
+    output=io.BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    return send_file(output,mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                     as_attachment=True,download_name='bills_history.xlsx')
+
+
 @app.get('/api/reports/download')
 @roles('admin','reception')
 def download_report():
