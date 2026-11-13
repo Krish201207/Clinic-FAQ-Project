@@ -982,13 +982,15 @@ def _chat_action(question, user):
             if pickup_slot == 'BEFORE_NOON':
                 pickup_slot = '10:00'
             elif pickup_slot == 'AFTER_NOON':
-                pickup_slot = '14:00'
+                pickup_slot = '17:00' if 'evening' in low else '14:00'
             if not pickup_day:
-                pickup_day = (date.today() + timedelta(days=1)).isoformat()
+                session['chat_medicine_order'] = {'stage':'details','medicine_id':selected['id'],'quantity':qty,'pickup_time':pickup_slot}
+                return {'answer': 'What day would you like to collect it? You can say tomorrow, Friday, or give a date.'}
             if date.fromisoformat(pickup_day) < date.today():
                 return {'answer': 'That pickup date has passed. Please give a future date, such as tomorrow or Friday.'}
             if not pickup_slot:
-                pickup_slot = '10:00'
+                session['chat_medicine_order'] = {'stage':'details','medicine_id':selected['id'],'quantity':qty,'pickup_date':pickup_day}
+                return {'answer': 'What pickup time works? You can say morning, afternoon, evening, or give a time such as 4 PM.'}
             pending_order = {'stage':'confirm','medicine_id':selected['id'],'quantity':qty,'pickup_date':pickup_day,'pickup_time':pickup_slot}
             session['chat_medicine_order'] = pending_order
             total = round(float(selected['price'] or 0) * qty, 2)
