@@ -1,4 +1,5 @@
 import os, re, sqlite3, uuid, csv, io
+from openpyxl import Workbook
 from pathlib import Path
 from functools import wraps
 from datetime import datetime, date, timedelta
@@ -116,6 +117,7 @@ def init_db():
           description TEXT NOT NULL, amount REAL NOT NULL, status TEXT DEFAULT 'Unpaid',
           created_at TEXT DEFAULT CURRENT_TIMESTAMP, paid_at TEXT DEFAULT '');
         CREATE TABLE IF NOT EXISTS medicine_purchases(id INTEGER PRIMARY KEY,medicine_id INTEGER NOT NULL REFERENCES medicines(id),quantity INTEGER NOT NULL,supplier TEXT DEFAULT '',cost REAL DEFAULT 0,purchased_by INTEGER REFERENCES users(id),created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE IF NOT EXISTS medicine_orders(id INTEGER PRIMARY KEY,patient_id INTEGER NOT NULL REFERENCES users(id),medicine_id INTEGER NOT NULL REFERENCES medicines(id),quantity INTEGER NOT NULL,pickup_date TEXT NOT NULL,pickup_time TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'Pickup requested',created_at TEXT DEFAULT CURRENT_TIMESTAMP);
         CREATE TABLE IF NOT EXISTS emergency_cases(id INTEGER PRIMARY KEY,patient_name TEXT NOT NULL,phone TEXT DEFAULT '',urgency TEXT NOT NULL,description TEXT DEFAULT '',status TEXT DEFAULT 'Open',created_by INTEGER REFERENCES users(id),created_at TEXT DEFAULT CURRENT_TIMESTAMP);
         CREATE TABLE IF NOT EXISTS health_records(
           id INTEGER PRIMARY KEY, patient_id INTEGER NOT NULL REFERENCES users(id),
@@ -468,6 +470,35 @@ def medicines():
     with db() as c: rows=c.execute('SELECT * FROM medicines WHERE name LIKE ? ORDER BY name',(f'%{term}%',)).fetchall()
     return jsonify(medicines=[dict(r) for r in rows])
 
+
+@app.route('/api/medicine-orders', methods=['GET','POST'])
+@login_required
+def medicine_orders():
+    u=current_user()
+    if request.method=='GET':
+        with db() as c:
+            if u['role'] in ('admin','reception'):
+                rows=c.execute('''SELECT o.*,p.name patient_name,m.name medicine_name,m.strength FROM medicine_orders o JOIN users p ON p.id=o.patient_id JOIN medicines m ON m.id=o.medicine_id ORDER BY o.id DESC''').fetchall()
+            else:
+                rows=c.execute('''SELECT o.*,m.name medicine_name,m.strength FROM medicine_orders o JOIN medicines m ON m.id=o.medicine_id WHERE o.patient_id=? ORDER BY o.id DESC''',(u['id'],)).fetchall()
+        return jsonify(orders=[dict(r) for r in rows])
+    if u['role']!='patient': return jsonify(error='Only patient accounts can place medicine pickup orders.'),403
+    d=request.get_json(silent=True) or {}
+    try:
+        medicine_id=int(d.get('medicine_id')); quantity=int(d.get('quantity'))
+        pickup_day=date.fromisoformat(str(d.get('pickup_date','')))
+        pickup_time=str(d.get('pickup_time','')); datetime.strptime(pickup_time,'%H:%M')
+    except Exception: return jsonify(error='Choose a medicine, quantity, pickup date, and pickup time.'),400
+    if quantity<1:return jsonify(error='Quantity must be at least one.'),400
+    if pickup_day<date.today():return jsonify(error='Pickup date cannot be in the past.'),400
+    with db() as c:
+        medicine=c.execute('SELECT id,name,stock FROM medicines WHERE id=?',(medicine_id,)).fetchone()
+        if not medicine:return jsonify(error='Medicine not found.'),404
+        if medicine['stock']<quantity:return jsonify(error='Not enough stock for that quantity.'),409
+        c.execute('UPDATE medicines SET stock=stock-?,updated_at=CURRENT_TIMESTAMP WHERE id=?',(quantity,medicine_id))
+        cur=c.execute('INSERT INTO medicine_orders(patient_id,medicine_id,quantity,pickup_date,pickup_time) VALUES(?,?,?,?,?)',(u['id'],medicine_id,quantity,pickup_day.isoformat(),pickup_time))
+    return jsonify(success=True,order_id=cur.lastrowid,message='Medicine reserved. Please collect it at the pharmacy at your selected pickup time.'),201
+
 @app.post('/api/medicines')
 @roles('admin','reception')
 def add_medicine():
@@ -609,6 +640,23 @@ def analytics():
         appts=c.execute('SELECT COUNT(*) FROM appointments').fetchone()[0]
         patients=c.execute("SELECT COUNT(*) FROM users WHERE role='patient'").fetchone()[0]
     return jsonify(total_queries=total,categories=categories,topics=topics,appointments=appts,patients=patients)
+
+
+@app.get('/api/reports/dues.xlsx')
+@roles('admin','reception')
+def download_dues_excel():
+    workbook=Workbook()
+    sheet=workbook.active
+    sheet.title='Outstanding Dues'
+    sheet.append(['Bill ID','Patient','Description','Amount (INR)','Status','Created At'])
+    with db() as c:
+        rows=c.execute("SELECT b.id,u.name,b.description,b.amount,b.status,b.created_at FROM bills b JOIN users u ON u.id=b.patient_id WHERE b.status='Unpaid' ORDER BY b.created_at DESC,b.id DESC").fetchall()
+    for row in rows: sheet.append([row['id'],row['name'],row['description'],row['amount'],row['status'],row['created_at']])
+    sheet.freeze_panes='A2'
+    sheet.auto_filter.ref=sheet.dimensions
+    for column,width in {'A':12,'B':24,'C':36,'D':18,'E':16,'F':22}.items(): sheet.column_dimensions[column].width=width
+    output=io.BytesIO(); workbook.save(output); output.seek(0)
+    return send_file(output,mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',as_attachment=True,download_name='outstanding_dues.xlsx')
 
 @app.get('/api/reports/download')
 @roles('admin','reception')
