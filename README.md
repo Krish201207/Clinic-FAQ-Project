@@ -18,12 +18,16 @@ The SQLite database is initialized automatically. Existing databases are migrate
 - Chat assistant for clinic FAQ questions and doctor information.
 - Natural-language appointment booking. Example: “Book me a cardiologist next Friday before noon.” The assistant asks for missing details, checks the doctor's schedule, chooses an available morning slot, and confirms only after the booking is saved.
 - View and cancel appointments.
-- Medicine inventory table with medicine-form icons and stock status. Forms include tablet, capsule, drinkable, sachet, and other.
+- Medicine inventory with 60+ fictional sample items, medicine forms, stock status, and supplier purchase records that update stock.
+- Expanded directory of 20+ fictional doctor profiles with departments, qualifications, schedules, and consultation fees.
+- Due-bill tracking with an explicitly simulated QR payment flow. Demo payments are labelled `Paid (Demo)` and never represent a real transfer.
+- Patient bed inventory and staff-only bed reservations, with duplicate active reservations prevented.
+- Staff emergency-case registration and a direct India emergency call link (112). The app does not dispatch emergency services.
 - Account-specific chat history.
 - Medical record metadata and attachments for permitted staff roles.
 - Admin/reception analytics and CSV reports.
 
-Billing and invoice screens, endpoints, and chatbot actions have been removed. The old database table is retained only so existing database files are not destructively altered.
+All added doctors, medicines, bed inventory, schedules, and prices are fictional demonstration data. The QR payment feature is not connected to UPI or a payment gateway.
 
 ## Demo staff accounts
 
