@@ -64,3 +64,6 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
 .classification-badge.unsupported { background:#fff5e7; color:#a85d0b; }
 .history-label { margin:9px 0 3px; color:var(--navy); font-size:.72rem; font-weight:800; }
 .history-text { white-space:pre-wrap; overflow-wrap:anywhere; }
+
+/* Medicine inventory table */
+.inventory-table-wrap{overflow-x:auto;background:#fff;border:1px solid var(--line);border-radius:13px;margin-top:14px}.inventory-table{width:100%;border-collapse:collapse;min-width:620px;text-align:left}.inventory-table th{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);background:#f5f8f9;padding:13px 15px}.inventory-table td{padding:14px 15px;border-top:1px solid var(--line);vertical-align:middle}.medicine-icon{display:inline-grid;place-items:center;width:32px;height:32px;border-radius:10px;background:#edf7f5;margin-right:9px;font-size:18px}.stock-pill{display:inline-block;padding:4px 9px;border-radius:20px;font-size:11px;font-weight:700}.stock-pill.in-stock{background:#e6f6ed;color:#187447}.stock-pill.out-stock{background:#fff0f0;color:#a52c35}
