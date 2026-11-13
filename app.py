@@ -724,26 +724,39 @@ def download_dues_excel():
     return send_file(output,mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',as_attachment=True,download_name='outstanding_dues.xlsx')
 
 @app.get('/api/reports/bills-history.xlsx')
-@roles('admin','reception')
+@login_required
 def download_bills_history_excel():
+    user=current_user()
     workbook=Workbook()
     sheet=workbook.active
     sheet.title='Billing History'
-    sheet.append(['Bill ID','Patient ID','Patient Name','Description','Amount (INR)','Payment Status','Bill Created At','Paid At'])
-    with db() as c:
-        rows=c.execute("""
-            SELECT b.id,b.patient_id,u.name patient_name,b.description,b.amount,
-                   b.status,b.created_at,b.paid_at
-            FROM bills b
-            JOIN users u ON u.id=b.patient_id
-            ORDER BY b.created_at DESC,b.id DESC
-        """).fetchall()
-    for row in rows:
-        sheet.append([row['id'],row['patient_id'],row['patient_name'],row['description'],
-                      row['amount'],row['status'],row['created_at'],row['paid_at'] or ''])
+    if user['role']=='patient':
+        sheet.append(['Bill ID','Description','Amount (INR)','Payment Status','Bill Created At','Paid At'])
+        with db() as c:
+            rows=c.execute("""
+                SELECT b.id,b.description,b.amount,b.status,b.created_at,b.paid_at
+                FROM bills b
+                WHERE b.patient_id=?
+                ORDER BY b.created_at DESC,b.id DESC
+            """,(user['id'],)).fetchall()
+        for row in rows:
+            sheet.append([row['id'],row['description'],row['amount'],row['status'],row['created_at'],row['paid_at'] or ''])
+    else:
+        sheet.append(['Bill ID','Patient ID','Patient Name','Description','Amount (INR)','Payment Status','Bill Created At','Paid At'])
+        with db() as c:
+            rows=c.execute("""
+                SELECT b.id,b.patient_id,u.name patient_name,b.description,b.amount,
+                       b.status,b.created_at,b.paid_at
+                FROM bills b
+                JOIN users u ON u.id=b.patient_id
+                ORDER BY b.created_at DESC,b.id DESC
+            """).fetchall()
+        for row in rows:
+            sheet.append([row['id'],row['patient_id'],row['patient_name'],row['description'],
+                          row['amount'],row['status'],row['created_at'],row['paid_at'] or ''])
     sheet.freeze_panes='A2'
     sheet.auto_filter.ref=sheet.dimensions
-    for column,width in {'A':12,'B':14,'C':24,'D':36,'E':18,'F':20,'G':22,'H':22}.items():
+    for column,width in {'A':12,'B':24,'C':24,'D':36,'E':18,'F':20,'G':22,'H':22}.items():
         sheet.column_dimensions[column].width=width
 
     summary=workbook.create_sheet('Summary')
@@ -761,8 +774,9 @@ def download_bills_history_excel():
     output=io.BytesIO()
     workbook.save(output)
     output.seek(0)
+    filename='my_bills_history.xlsx' if user['role']=='patient' else 'bills_history.xlsx'
     return send_file(output,mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                     as_attachment=True,download_name='bills_history.xlsx')
+                     as_attachment=True,download_name=filename)
 
 
 @app.get('/api/reports/download')
