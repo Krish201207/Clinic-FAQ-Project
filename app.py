@@ -505,7 +505,7 @@ def download_report():
         for row in c.execute('SELECT topic,COUNT(*) FROM chat_history GROUP BY topic ORDER BY COUNT(*) DESC'):
             writer.writerow(list(row))
     data = io.BytesIO(('\ufeff' + output.getvalue()).encode('utf-8'))
-    return send_file(data, mimetype='text/csv; charset=utf-8', as_attachment=True, download_name='hospital_report.csv')
+    return send_file(data, mimetype='text/csv; charset=utf-8', as_attachment=True, download_name='clinic_faq_report.csv')
 
 def _parse_chat_date(text):
     q = text.lower()
