@@ -817,6 +817,7 @@ def reschedule_appointment(appointment_id):
                      VALUES(?,?,?,'appointment')""",
                   (appt['patient_id'],'Appointment rescheduled',
                    f"Your appointment with {doctor['name']} has been moved from {appt['appointment_date']} at {appt['appointment_time']} to {new_day.isoformat()} at {new_slot}. Check Appointments for the updated details."))
+    sync_persistent_appointments()
     return jsonify(success=True,message='Appointment rescheduled. The patient has been notified and can pay the existing bill under Due payments.')
 
 
