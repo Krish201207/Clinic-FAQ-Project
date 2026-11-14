@@ -1300,6 +1300,8 @@ def download_report():
 
 def _parse_chat_date(text):
     q = text.lower()
+    # Accept common spelling mistakes in short date replies.
+    q = re.sub(r'\\btomm?or+ow\\b|\\btomorow\\b', 'tomorrow', q)
     today = date.today()
     if 'day after tomorrow' in q:
         return (today + timedelta(days=2)).isoformat()
@@ -1461,6 +1463,18 @@ def _chat_action(question, user):
         pending_order = session.get('chat_medicine_order')
         yes_reply = low.strip(" .!?") in ('yes','yes please','confirm','confirm order','place order','do it','okay','ok')
         no_reply = low.strip(" .!?") in ('no','no thanks','cancel','cancel order','stop')
+        if pending_order and user['role'] == 'patient' and not order_intent:
+            # Do not trap ordinary FAQ questions inside an unfinished pickup flow.
+            # Only consume a short reply when it actually supplies an expected detail.
+            has_date = _parse_chat_date(q) is not None
+            has_time = _parse_chat_time(q) is not None
+            has_quantity = bool(re.search(r'\\b\\d+\\b|\\b(one|a|an|two|couple|pair|three|few|four|five)\\b', low))
+            has_medicine = any(m['name'].lower() in low for m in c.execute(
+                'SELECT name FROM medicines WHERE stock>0'
+            ).fetchall())
+            if not (yes_reply or no_reply or has_date or has_time or has_quantity or has_medicine):
+                session.pop('chat_medicine_order', None)
+                pending_order = None
         if (order_intent or pending_order) and user['role'] == 'patient':
             catalog = [dict(r) for r in c.execute(
                 'SELECT id,name,strength,price,stock FROM medicines WHERE stock>0 ORDER BY name'
