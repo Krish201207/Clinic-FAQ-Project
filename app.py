@@ -509,10 +509,18 @@ def doctors():
 def appointments():
     u=current_user()
     with db() as c:
+        # Expire past booked appointments without deleting their history.
+        c.execute("""UPDATE appointments
+                     SET status='Expired'
+                     WHERE status='Booked'
+                       AND (appointment_date < ? OR
+                            (appointment_date = ? AND appointment_time < ?))""",
+                  (date.today().isoformat(), date.today().isoformat(), datetime.now().strftime('%H:%M')))
         if u['role'] in ('admin','reception'):
-            rows=c.execute('''SELECT a.*,u.name patient_name,d.name doctor_name,d.department FROM appointments a JOIN users u ON u.id=a.patient_id JOIN doctors d ON d.id=a.doctor_id ORDER BY appointment_date DESC,appointment_time DESC LIMIT 300''').fetchall()
+            # Admin/reception see the complete clinic appointment register.
+            rows=c.execute('''SELECT a.*,u.name patient_name,d.name doctor_name,d.department FROM appointments a JOIN users u ON u.id=a.patient_id JOIN doctors d ON d.id=a.doctor_id ORDER BY appointment_date DESC,appointment_time DESC LIMIT 1000''').fetchall()
         elif u['role']=='doctor':
-            rows=c.execute('''SELECT a.*,u.name patient_name,d.name doctor_name,d.department FROM appointments a JOIN users u ON u.id=a.patient_id JOIN doctors d ON d.id=a.doctor_id WHERE a.doctor_id=? ORDER BY appointment_date DESC,appointment_time DESC LIMIT 300''',(u['doctor_profile_id'],)).fetchall() if u['doctor_profile_id'] else []
+            rows=c.execute('''SELECT a.*,u.name patient_name,d.name doctor_name,d.department FROM appointments a JOIN users u ON u.id=a.patient_id JOIN doctors d ON d.id=a.doctor_id WHERE a.doctor_id=? ORDER BY appointment_date DESC,appointment_time DESC LIMIT 1000''',(u['doctor_profile_id'],)).fetchall() if u['doctor_profile_id'] else []
         else:
             rows=c.execute('''SELECT a.*,d.name doctor_name,d.department FROM appointments a JOIN doctors d ON d.id=a.doctor_id WHERE a.patient_id=? ORDER BY appointment_date DESC,appointment_time DESC''',(u['id'],)).fetchall()
     return jsonify(appointments=[dict(r) for r in rows])
