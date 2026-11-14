@@ -59,7 +59,25 @@ loadDashboardMetrics();
 
 // Profile dropdown: logout is shown only after the profile control is clicked.
 const profileToggle=$('#profile-toggle'), profileMenu=$('#profile-menu');
-profileToggle?.addEventListener('click',()=>{const open=profileMenu.hidden;profileMenu.hidden=!open;profileToggle.setAttribute('aria-expanded',String(open));});
+async function loadNotifications(){
+ const box=$('#profile-notifications');if(!box)return;
+ try{
+  const d=await api('/api/notifications');
+  const count=$('#notification-count');
+  if(count){count.textContent=d.unread_count;count.hidden=!d.unread_count}
+  box.innerHTML=(d.notifications||[]).map(n=>'<button type="button" class="profile-notification '+(n.is_read?'read':'unread')+'" data-notification-id="'+n.id+'"><b>'+esc(n.title)+'</b><small>'+esc(n.message)+'</small><time>'+esc(n.created_at)+'</time></button>').join('')||'<p class="notification-empty">No notifications yet.</p>';
+ }catch(e){box.innerHTML='<p class="notification-empty">Could not load notifications.</p>'}
+}
+profileToggle?.addEventListener('click',()=>{const open=profileMenu.hidden;profileMenu.hidden=!open;profileToggle.setAttribute('aria-expanded',String(open));if(open)loadNotifications()});
+$('#profile-notifications')?.addEventListener('click',async e=>{
+ const item=e.target.closest('[data-notification-id]');if(!item)return;
+ try{await api('/api/notifications/'+item.dataset.notificationId+'/read',{method:'PATCH'});await loadNotifications()}catch(err){notify(err)}
+});
+$('#mark-all-notifications')?.addEventListener('click',async()=>{
+ try{await api('/api/notifications/read-all',{method:'POST',body:JSON.stringify({})});await loadNotifications()}catch(err){notify(err)}
+});
+loadNotifications();
+setInterval(loadNotifications,30000);
 document.addEventListener('click',e=>{if(profileMenu&&!profileMenu.hidden&&!e.target.closest('.profile-wrap')){profileMenu.hidden=true;profileToggle?.setAttribute('aria-expanded','false')}});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&profileMenu&&!profileMenu.hidden){profileMenu.hidden=true;profileToggle?.setAttribute('aria-expanded','false')}});
 
