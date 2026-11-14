@@ -597,6 +597,9 @@ def register():
                 flash('That email is already registered.', 'error')
             except Exception:
                 app.logger.exception('Persistent account registration failed')
+                # Do not leave an account only in ephemeral SQLite when Supabase failed.
+                with db() as c:
+                    c.execute('DELETE FROM users WHERE email=?',(email,))
                 flash('Account was not created because persistent database storage is unavailable. Please try again later.', 'error')
     return render_template('register.html')
 
