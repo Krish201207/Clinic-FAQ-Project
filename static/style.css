@@ -107,3 +107,14 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
 .dark-mode .managed-price-row{border-color:#34505b}
 .dark-mode .managed-price-row b{color:#e8f0f2}
 @media(max-width:650px){.managed-price-row{grid-template-columns:1fr 1fr}.managed-price-row>div{grid-column:1/-1}.managed-price-row button{grid-column:1/-1}}
+
+.audit-heading{margin-top:26px;padding-top:18px;border-top:1px solid var(--line)}
+.table-wrap{width:100%;overflow-x:auto;margin-top:12px}
+.audit-table{width:100%;border-collapse:collapse;min-width:850px;font-size:11px}
+.audit-table th,.audit-table td{padding:10px 9px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+.audit-table th{background:#f1f6f6;color:var(--navy);font-weight:700;white-space:nowrap}
+.audit-table td{color:var(--ink);max-width:260px;overflow-wrap:anywhere}
+.audit-table td small{display:block;color:var(--muted);margin-top:3px}
+.dark-mode .audit-heading{border-color:#34505b}
+.dark-mode .audit-table th{background:#203b47;color:#e8f0f2}
+.dark-mode .audit-table td{color:#e8f0f2;border-color:#34505b}
