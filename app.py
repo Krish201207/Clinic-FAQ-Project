@@ -568,6 +568,32 @@ def price_list():
     return jsonify(services=services, doctors=doctors, medicines=medicines)
 
 
+@app.patch('/api/prices/<string:kind>/<int:item_id>')
+@roles('admin')
+def update_catalog_price(kind,item_id):
+    data=request.get_json(silent=True) or {}
+    try:
+        price=float(data.get('price'))
+        if not math.isfinite(price) or price<0 or price>10000000:
+            raise ValueError()
+    except (TypeError,ValueError):
+        return jsonify(error='Enter a valid price between 0 and 10,000,000.'),400
+    targets={
+        'service':('hospital_services','price'),
+        'doctor':('doctors','consultation_fee'),
+        'medicine':('medicines','price')
+    }
+    if kind not in targets:
+        return jsonify(error='Unknown price category.'),404
+    table,column=targets[kind]
+    with db() as c:
+        cur=c.execute(f'UPDATE {table} SET {column}=? WHERE id=?',(price,item_id))
+        if not cur.rowcount:
+            return jsonify(error='Catalogue item not found.'),404
+        row=c.execute(f'SELECT id,{column} AS price FROM {table} WHERE id=?',(item_id,)).fetchone()
+    return jsonify(success=True,id=row['id'],price=row['price'],message='Price updated successfully.')
+
+
 @app.get('/api/medicines')
 @login_required
 def medicines():
