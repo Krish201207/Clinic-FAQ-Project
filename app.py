@@ -682,7 +682,7 @@ def update_catalog_price(kind,item_id):
             if not before:
                 return jsonify(error='Catalogue item not found.'),404
             old_price=effective_price(overrides,kind,item_id,before['price'])
-            actor=current_user().get('email') or str(current_user()['id'])
+            actor=current_user()['email'] or str(current_user()['id'])
             save_price_override(kind,item_id,price,old_price,actor)
             c.execute(f'UPDATE {table} SET {column}=? WHERE id=?',(price,item_id))
             row=c.execute(f'SELECT id,{column} AS price FROM {table} WHERE id=?',(item_id,)).fetchone()
