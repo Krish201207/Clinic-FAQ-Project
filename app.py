@@ -609,12 +609,14 @@ def update_catalog_price(kind,item_id):
         return jsonify(error='Unknown price category.'),404
     table,column=targets[kind]
     with db() as c:
-        cur=c.execute(f'UPDATE {table} SET {column}=? WHERE id=?',(price,item_id))
-        if not cur.rowcount:
+        before=c.execute(f'SELECT id,{column} AS price FROM {table} WHERE id=?',(item_id,)).fetchone()
+        if not before:
             return jsonify(error='Catalogue item not found.'),404
+        old_price=float(before['price'] or 0)
+        cur=c.execute(f'UPDATE {table} SET {column}=? WHERE id=?',(price,item_id))
         row=c.execute(f'SELECT id,{column} AS price FROM {table} WHERE id=?',(item_id,)).fetchone()
         c.execute("""INSERT INTO audit_logs(actor_user_id,action,entity_type,entity_id,details,old_value,new_value) VALUES(?,?,?,?,?,?,?)""",
-                  (current_user()['id'],'Price updated',kind,item_id,f"{kind.title()} price set to ₹{price:.2f}",str(data.get('previous_price','')),f"{price:.2f}"))
+                  (current_user()['id'],'Price updated',kind,item_id,f"{kind.title()} price changed from ₹{old_price:.2f} to ₹{price:.2f}",f"₹{old_price:.2f}",f"₹{price:.2f}"))
     return jsonify(success=True,id=row['id'],price=row['price'],message='Price updated successfully.')
 
 
