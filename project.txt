@@ -1,0 +1,36 @@
+CLINIC FAQ PROJECT
+Project Overview
+
+1. Project summary
+The Clinic FAQ Project is a web-based clinic information and workflow assistant built with Python and Flask. It is designed to demonstrate how a clinic-oriented web application can combine FAQ assistance, patient accounts, appointment scheduling, doctor information, medicine inventory, billing demonstrations, medical-record handling, and staff-facing management tools.
+
+2. Main user roles
+- Patients: create accounts, ask clinic-related questions, view appointment information, and access permitted patient-facing features.
+- Doctors: access doctor-facing functionality and relevant appointment/record information.
+- Reception staff: manage front-desk workflows such as appointments and patient-related operations.
+- Administrators: access management, inventory, pricing, audit, and analytics functions.
+
+3. AI and NLP approach
+The project includes a local text-classification component in clinic_classifier.py. It normalizes and tokenizes the input, retrieves available word embeddings from Embeddings.vec, averages the known word vectors to form a sentence vector, normalizes the vector, and applies a linear classifier with softmax scores. The classifier outputs one of three labels: ROUTINE, SENSITIVE, or UNSUPPORTED.
+
+The application also integrates the Google Gemini API through the google-genai package when GEMINI_API_KEY is configured. The default configured model is gemini-2.5-flash, with GEMINI_MODEL available as an override. The local classifier and Gemini integration are separate components and should not be described as the same model.
+
+4. Data and files
+- FAQ.txt: clinic FAQ knowledge-base content.
+- Embeddings.vec: word-vector data consumed by the classifier.
+- classifier_weights.txt: learned linear classifier parameters.
+- The Kaggle GloVe 6B 100-dimensional file linked in link.txt is an embedding resource. It is not, by itself, a labeled dataset of clinic questions.
+- The repository does not currently document the source and size of the labeled data used to train the classifier or verified evaluation scores. These details must be confirmed before reporting model accuracy or other metrics.
+
+5. Technology
+Python, Flask, NumPy, SQLite, selected PostgreSQL/Supabase persistence integration, Google Gemini API, HTML, CSS, JavaScript, Gunicorn, and Render.
+
+6. Deployment
+Demonstration deployment:
+https://clinic-faq-project.onrender.com
+
+Source code:
+https://github.com/Krish201207/Clinic-FAQ-Project
+
+7. Limitations
+This is an educational prototype. It is not a production medical system and does not diagnose, prescribe, recommend dosages, or interpret medical reports. Demonstration doctors, schedules, medicines, and prices are fictional. The QR payment workflow is a test-only flow, and emergency-case registration does not dispatch emergency services. A security, privacy, and clinical review is required before real-world use.
