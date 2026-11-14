@@ -13,6 +13,7 @@
        {% if user.role == 'admin' %}<button data-tab="manage-prices"><span>₹</span> Manage prices</button>{% endif %}
       <div class="side-label">ASSISTANT</div>
       <button data-tab="assistant"><span>◉</span> Clinic assistant</button>
+      <button data-tab="history"><span>◷</span> Conversation history</button>
       {% if user.role in ['admin','reception'] %}<button data-tab="analytics"><span>▧</span> Reports & analytics</button>{% endif %}
     </nav>
     <div class="sidebar-bottom"><div class="secure-mark">✓</div><div><b>Secure workspace</b><small>Authorized access only</small></div></div>
@@ -61,9 +62,8 @@
       </div>
       <div class="chat-log" id="chat-log"><div class="bot">Welcome to Clinic FAQ Project. Ask about clinic services, doctors, appointments, or available medicines.</div></div>
       <form id="chat-form" class="chat-form"><input id="chat-question" maxlength="500" placeholder="Example: Book Dr. Asha Mehta tomorrow at 10 AM" required><button>Send message</button></form>
-      <div class="section-title price-heading"><div><h2>Clinic service price list</h2><p>Current listed rates — confirm charges with reception</p></div><button type="button" id="reload-prices" class="utility-btn">↻ Refresh prices</button></div>
-      <div id="assistant-price-list" class="price-grid"><p>Loading current price list…</p></div>
     </section>
+    <section id="history" class="panel"><div class="section-title"><div><h2>Conversation history</h2><p>Your saved questions and assistant responses</p></div><button type="button" id="refresh-history" class="utility-btn">↻ Refresh history</button></div><div id="history-list" class="history-list"><p>Loading conversation history…</p></div></section>
     {% if user.role in ['admin','reception'] %}<section id="analytics" class="panel"><div class="section-title"><div><h2>Reports & analytics</h2><p>Operational overview and patient query trends</p></div><a class="report-button" href="{{ url_for('download_report') }}">↓ Download report</a></div><div id="analytics-summary" class="cards"></div><h3>Queries by topic</h3><div id="topic-list" class="list"></div><h3>Question classification (internal)</h3><p class="muted">These labels describe how the system classifies incoming questions; they are not patient actions or menu options.</p><div id="category-list" class="list"></div></section>{% endif %}
     <footer><span>✚ CLINIC FAQ PROJECT</span><span>Clinic information workspace</span></footer>
   </main>
