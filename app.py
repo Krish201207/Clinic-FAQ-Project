@@ -1562,6 +1562,36 @@ def export_database():
         return jsonify(error='Database export failed. Check the Render logs.'), 500
 
 
+@app.get('/admin/postgres-check')
+@roles('admin')
+def postgres_check():
+    """Admin-only connectivity check; does not change the active SQLite database."""
+    database_url = os.getenv('DATABASE_URL', '').strip()
+    if not database_url:
+        return jsonify(ok=False, connected=False, error='DATABASE_URL is not configured.'), 503
+    try:
+        import psycopg
+        with psycopg.connect(database_url, connect_timeout=8) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute('SELECT current_database(), current_user')
+                database_name, database_user = cursor.fetchone()
+        return jsonify(
+            ok=True,
+            connected=True,
+            database=database_name,
+            database_user=database_user,
+            active_app_database='sqlite',
+            message='PostgreSQL credentials work. The application is not switched to PostgreSQL yet.'
+        )
+    except Exception as exc:
+        app.logger.exception('PostgreSQL connectivity check failed')
+        return jsonify(
+            ok=False,
+            connected=False,
+            error=f'PostgreSQL connection failed ({type(exc).__name__}). Check DATABASE_URL in Render.'
+        ), 503
+
+
 @app.get('/health')
 def health():
     return jsonify(ok=True, gemini_configured=GEMINI is not None, classifier_loaded=CLASSIFIER is not None, database=str(DB_PATH), database_exists=DB_PATH.exists(), secret_key_configured=bool(os.getenv('SECRET_KEY'))) 
