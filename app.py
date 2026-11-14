@@ -79,8 +79,8 @@ except Exception:
 API_KEY = os.getenv('GEMINI_API_KEY')
 MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
 GEMINI = genai.Client(api_key=API_KEY) if genai and API_KEY else None
-# Accept both the historical typo (FQA.txt) and conventional FAQ.txt.
-FAQ_PATH = next((p for p in (BASE / 'FAQ.txt', BASE / 'FQA.txt') if p.exists()), BASE / 'FAQ.txt')
+# Load the clinic FAQ knowledge base from its canonical filename.
+FAQ_PATH = BASE / 'FAQ.txt'
 
 
 def db():
