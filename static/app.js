@@ -61,7 +61,7 @@ async function loadPriceList(){const box=$('#assistant-price-list');if(!box)retu
 $('#refresh-history')?.addEventListener('click',()=>loadChatHistory().catch(notify));
 $('#reload-prices')?.addEventListener('click',()=>loadPriceList().catch(notify));
 async function loadAnalytics(){const d=await api('/api/analytics');$('#analytics-summary').innerHTML=[['Total chatbot queries',d.total_queries],['Appointments',d.appointments],['Registered patients',d.patients]].map(x=>`<article><span>${x[0]}</span><strong>${x[1]}</strong></article>`).join('');$('#topic-list').innerHTML=d.topics.map(x=>`<article><b>${esc(x.label)}</b><strong>${x.count}</strong></article>`).join('')||'<p>No query data yet.</p>';$('#category-list').innerHTML=d.categories.map(x=>`<article><b>${esc(x.label)}</b><strong>${x.count}</strong></article>`).join('')||'<p>No classifications yet.</p>'}
-function loadTab(id){const map={doctors:loadDoctors,appointments:loadAppointments,records:loadRecords,medicines:()=>Promise.all([loadMedicines(),loadMedicineOrders()]),analytics:loadAnalytics,history:loadChatHistory,assistant:loadPriceList,'manage-prices':()=>Promise.all([loadManagedPrices(),loadAuditLogs()]),payments:loadBills,emergency:loadEmergencies};if(map[id])map[id]().catch(notify)}
+function loadTab(id){const map={doctors:loadDoctors,appointments:loadAppointments,records:loadRecords,medicines:()=>Promise.all([loadMedicines(),loadMedicineOrders()]),analytics:loadAnalytics,history:loadChatHistory,assistant:()=>loadChatContext(),'manage-prices':()=>Promise.all([loadManagedPrices(),loadAuditLogs()]),payments:loadBills,emergency:loadEmergencies};if(map[id])map[id]().catch(notify)}
 
 // Executive dashboard enhancements: live KPIs, workspace search and theme controls.
 async function loadDashboardMetrics(){
@@ -114,7 +114,7 @@ refreshButton?.addEventListener('click', async () => {
   const active = document.querySelector('.panel.active')?.id || 'overview';
   const loaders = {
     overview: loadDashboardMetrics,
-    assistant: loadPriceList,
+    assistant: loadChatContext,
     history: loadChatHistory,
     appointments: loadAppointments,
     doctors: loadDoctors,
