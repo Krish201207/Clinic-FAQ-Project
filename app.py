@@ -193,6 +193,68 @@ def sync_persistent_accounts():
             """, user)
 
 
+def sync_persistent_appointments():
+    """Mirror appointment records to Supabase and restore them on a fresh instance."""
+    url = os.getenv('DATABASE_URL', '').strip()
+    if not url:
+        return
+    import psycopg
+    with db() as local:
+        local_rows = local.execute("""
+            SELECT id,patient_id,doctor_id,appointment_date,appointment_time,
+                   reason,status,created_at FROM appointments
+        """).fetchall()
+    with psycopg.connect(url, connect_timeout=10) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS clinic_appointments (
+                    id BIGINT PRIMARY KEY,
+                    patient_id BIGINT NOT NULL,
+                    doctor_id BIGINT NOT NULL,
+                    appointment_date TEXT NOT NULL,
+                    appointment_time TEXT NOT NULL,
+                    reason TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'Booked',
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text
+                )
+            """)
+            for row in local_rows:
+                cur.execute("""
+                    INSERT INTO clinic_appointments
+                        (id,patient_id,doctor_id,appointment_date,appointment_time,reason,status,created_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT (id) DO UPDATE SET
+                        patient_id=EXCLUDED.patient_id,
+                        doctor_id=EXCLUDED.doctor_id,
+                        appointment_date=EXCLUDED.appointment_date,
+                        appointment_time=EXCLUDED.appointment_time,
+                        reason=EXCLUDED.reason,
+                        status=EXCLUDED.status
+                """, tuple(row))
+            cur.execute("""
+                SELECT id,patient_id,doctor_id,appointment_date,appointment_time,
+                       reason,status,created_at
+                FROM clinic_appointments ORDER BY id
+            """)
+            remote_rows = cur.fetchall()
+    with db() as local:
+        for row in remote_rows:
+            # Restore only when the referenced patient and doctor exist locally.
+            if not local.execute('SELECT 1 FROM users WHERE id=?',(row[1],)).fetchone():
+                continue
+            if not local.execute('SELECT 1 FROM doctors WHERE id=?',(row[2],)).fetchone():
+                continue
+            local.execute("""
+                INSERT INTO appointments
+                    (id,patient_id,doctor_id,appointment_date,appointment_time,reason,status,created_at)
+                VALUES(?,?,?,?,?,?,?,?)
+                ON CONFLICT(id) DO UPDATE SET
+                    appointment_date=excluded.appointment_date,
+                    appointment_time=excluded.appointment_time,
+                    reason=excluded.reason,
+                    status=excluded.status
+            """, row)
+
 def save_persistent_account(user_id):
     """Persist a newly registered or updated account before reporting success."""
     url = os.getenv('DATABASE_URL', '').strip()
@@ -413,6 +475,7 @@ def init_db():
 init_db()
 try:
     sync_persistent_accounts()
+    sync_persistent_appointments()
 except Exception:
     app.logger.exception('Could not synchronize persistent Supabase accounts')
 
@@ -637,6 +700,7 @@ def appointments():
             rows=c.execute('''SELECT a.*,u.name patient_name,d.name doctor_name,d.department FROM appointments a JOIN users u ON u.id=a.patient_id JOIN doctors d ON d.id=a.doctor_id WHERE a.doctor_id=? ORDER BY appointment_date DESC,appointment_time DESC LIMIT 1000''',(u['doctor_profile_id'],)).fetchall() if u['doctor_profile_id'] else []
         else:
             rows=c.execute('''SELECT a.*,d.name doctor_name,d.department FROM appointments a JOIN doctors d ON d.id=a.doctor_id WHERE a.patient_id=? ORDER BY appointment_date DESC,appointment_time DESC''',(u['id'],)).fetchall()
+    sync_persistent_appointments()
     return jsonify(appointments=[dict(r) for r in rows])
 
 @app.post('/api/appointments')
@@ -671,6 +735,7 @@ def book_appointment():
                 bill_desc=f"Appointment with {doctor['name']} on {day.isoformat()} at {slot}"
                 bill_id=c.execute('INSERT INTO bills(patient_id,description,amount) VALUES(?,?,?)',(u['id'],bill_desc,bill_amount)).lastrowid
         except sqlite3.IntegrityError: return jsonify(error='That doctor already has an appointment at this time. Choose another slot.'),409
+    sync_persistent_appointments()
     return jsonify(success=True,bill_id=bill_id if u['role']=='patient' else None,amount=bill_amount if u['role']=='patient' else 0,message='Appointment booked. An unpaid bill has been added to Due payments.' if bill_id else 'Appointment booked.'),201
 
 @app.patch('/api/appointments/<int:appointment_id>')
@@ -683,6 +748,7 @@ def cancel_appointment(appointment_id):
         if u['role']=='patient' and row['patient_id']!=u['id']: return jsonify(error='Not your appointment.'),403
         if u['role'] not in ('patient','admin','reception'): return jsonify(error='Not permitted.'),403
         c.execute("UPDATE appointments SET status='Cancelled' WHERE id=?",(appointment_id,))
+    sync_persistent_appointments()
     return jsonify(success=True)
 
 @app.post('/api/appointments/<int:appointment_id>/reschedule')
