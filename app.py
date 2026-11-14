@@ -123,6 +123,11 @@ def init_db():
           id INTEGER PRIMARY KEY, patient_id INTEGER NOT NULL REFERENCES users(id),
           doctor_id INTEGER REFERENCES users(id), record_type TEXT NOT NULL,
           notes TEXT DEFAULT '', file_name TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE IF NOT EXISTS audit_logs(
+          id INTEGER PRIMARY KEY, actor_user_id INTEGER REFERENCES users(id),
+          action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id INTEGER,
+          details TEXT DEFAULT '', old_value TEXT DEFAULT '', new_value TEXT DEFAULT '',
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP);
         CREATE TABLE IF NOT EXISTS notifications(
           id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id),
           title TEXT NOT NULL, message TEXT NOT NULL, notification_type TEXT DEFAULT 'info',
@@ -218,7 +223,7 @@ def init_db():
         # Demo accounts: change these credentials and SECRET_KEY before any deployment.
         demo = [('Hospital Admin','admin@demo.local','admin123','admin'),
                 ('Reception Desk','reception@demo.local','reception123','reception'),
-                ('Demo Doctor','doctor@demo.local','doctor123','doctor')]
+                ('Dr. Rahul Verma','doctor@demo.local','doctor123','doctor')]
         for name,email,pw,role in demo:
             if not c.execute('SELECT 1 FROM users WHERE email=?',(email,)).fetchone():
                 c.execute('INSERT INTO users(name,email,password_hash,role) VALUES(?,?,?,?)',
@@ -230,6 +235,9 @@ def init_db():
             ('Dr. Neha Kapoor', 'doctor2@demo.local', '00000002', 2),
         ]
         doctor_rows = c.execute('SELECT id,name FROM doctors ORDER BY id').fetchall()
+        cardiologist = c.execute("SELECT id FROM doctors WHERE lower(department)='cardiology' ORDER BY id LIMIT 1").fetchone()
+        if cardiologist:
+            c.execute("UPDATE users SET name='Dr. Rahul Verma', doctor_profile_id=? WHERE email='doctor@demo.local' AND role='doctor'",(cardiologist['id'],))
         for name,email,pw,index in doctor_accounts:
             profile_id = doctor_rows[index]['id'] if index < len(doctor_rows) else None
             existing = c.execute('SELECT id FROM users WHERE email=?',(email,)).fetchone()
@@ -551,6 +559,10 @@ def reschedule_appointment(appointment_id):
         c.execute("""UPDATE bills SET description=?
                      WHERE patient_id=? AND description=?""",
                   (new_description,appt['patient_id'],old_description))
+        c.execute("""INSERT INTO audit_logs(actor_user_id,action,entity_type,entity_id,details,old_value,new_value) VALUES(?,?,?,?,?,?,?)""",
+                  (u['id'],'Appointment rescheduled','appointment',appointment_id,
+                   f"Rescheduled appointment with {doctor['name']} for patient ID {appt['patient_id']}",
+                   f"{appt['appointment_date']} {appt['appointment_time']}",f"{new_day.isoformat()} {new_slot}"))
         c.execute("""INSERT INTO notifications(user_id,title,message,notification_type)
                      VALUES(?,?,?,'appointment')""",
                   (appt['patient_id'],'Appointment rescheduled',
@@ -566,6 +578,16 @@ def price_list():
         doctors = [dict(r) for r in c.execute('SELECT id,name,department,consultation_fee AS price FROM doctors WHERE active=1 ORDER BY department,name').fetchall()]
         medicines = [dict(r) for r in c.execute('SELECT id,name,strength,price,stock FROM medicines ORDER BY name').fetchall()]
     return jsonify(services=services, doctors=doctors, medicines=medicines)
+
+
+@app.get('/api/audit-logs')
+@roles('admin')
+def get_audit_logs():
+    try: limit=max(1,min(int(request.args.get('limit',200)),500))
+    except (TypeError,ValueError): limit=200
+    with db() as c:
+        rows=c.execute("""SELECT a.id,a.action,a.entity_type,a.entity_id,a.details,a.old_value,a.new_value,a.created_at,u.name AS actor_name,u.email AS actor_email FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_user_id ORDER BY a.id DESC LIMIT ?""",(limit,)).fetchall()
+    return jsonify(logs=[dict(r) for r in rows])
 
 
 @app.patch('/api/prices/<string:kind>/<int:item_id>')
@@ -591,6 +613,8 @@ def update_catalog_price(kind,item_id):
         if not cur.rowcount:
             return jsonify(error='Catalogue item not found.'),404
         row=c.execute(f'SELECT id,{column} AS price FROM {table} WHERE id=?',(item_id,)).fetchone()
+        c.execute("""INSERT INTO audit_logs(actor_user_id,action,entity_type,entity_id,details,old_value,new_value) VALUES(?,?,?,?,?,?,?)""",
+                  (current_user()['id'],'Price updated',kind,item_id,f"{kind.title()} price set to ₹{price:.2f}",str(data.get('previous_price','')),f"{price:.2f}"))
     return jsonify(success=True,id=row['id'],price=row['price'],message='Price updated successfully.')
 
 
