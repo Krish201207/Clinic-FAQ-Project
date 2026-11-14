@@ -255,6 +255,65 @@ def sync_persistent_appointments():
                     status=excluded.status
             """, row)
 
+def sync_persistent_chat_history():
+    """Keep conversation history in Supabase, keyed to the same signed-in user."""
+    url = os.getenv('DATABASE_URL', '').strip()
+    if not url:
+        return
+    import psycopg
+    with db() as local:
+        local_rows = local.execute("""
+            SELECT id,user_id,session_id,question,answer,classification,topic,created_at
+            FROM chat_history
+        """).fetchall()
+    with psycopg.connect(url, connect_timeout=10) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS clinic_chat_history (
+                    id BIGINT PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
+                    session_id TEXT,
+                    question TEXT NOT NULL,
+                    answer TEXT NOT NULL,
+                    classification TEXT NOT NULL DEFAULT 'UNAVAILABLE',
+                    topic TEXT NOT NULL DEFAULT 'Other',
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text
+                )
+            """)
+            for row in local_rows:
+                cur.execute("""
+                    INSERT INTO clinic_chat_history
+                        (id,user_id,session_id,question,answer,classification,topic,created_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT (id) DO UPDATE SET
+                        user_id=EXCLUDED.user_id,
+                        session_id=EXCLUDED.session_id,
+                        question=EXCLUDED.question,
+                        answer=EXCLUDED.answer,
+                        classification=EXCLUDED.classification,
+                        topic=EXCLUDED.topic
+                """, tuple(row))
+            cur.execute("""
+                SELECT id,user_id,session_id,question,answer,classification,topic,created_at
+                FROM clinic_chat_history ORDER BY id
+            """)
+            remote_rows = cur.fetchall()
+    with db() as local:
+        for row in remote_rows:
+            if not local.execute('SELECT 1 FROM users WHERE id=?',(row[1],)).fetchone():
+                continue
+            local.execute("""
+                INSERT INTO chat_history
+                    (id,user_id,session_id,question,answer,classification,topic,created_at)
+                VALUES(?,?,?,?,?,?,?,?)
+                ON CONFLICT(id) DO UPDATE SET
+                    session_id=excluded.session_id,
+                    question=excluded.question,
+                    answer=excluded.answer,
+                    classification=excluded.classification,
+                    topic=excluded.topic
+            """, row)
+
 def save_persistent_account(user_id):
     """Persist a newly registered or updated account before reporting success."""
     url = os.getenv('DATABASE_URL', '').strip()
@@ -476,6 +535,7 @@ init_db()
 try:
     sync_persistent_accounts()
     sync_persistent_appointments()
+    sync_persistent_chat_history()
 except Exception:
     app.logger.exception('Could not synchronize persistent Supabase accounts')
 
@@ -629,6 +689,10 @@ def chat_history():
                 c.execute('UPDATE chat_history SET classification=? WHERE id=?',
                           (item['classification'],item['id']))
             history.append(item)
+    sync_persistent_chat_history()
+    with db() as c:
+        rows=c.execute('SELECT id,question,answer,classification,topic,created_at FROM chat_history WHERE user_id=? ORDER BY id DESC LIMIT 200',(u['id'],)).fetchall()
+        history=[dict(row) for row in rows]
     return jsonify(history=history)
 
 
@@ -1764,6 +1828,7 @@ def ask():
                 'INSERT INTO chat_history(user_id,session_id,question,answer,classification,topic) VALUES(?,?,?,?,?,?)',
                 (u['id'], conversation_id, question, answer, category, topic)
             )
+        sync_persistent_chat_history()
         return jsonify(answer=answer, action=True)
 
     faq = FAQ_PATH.read_text(encoding='utf-8') if FAQ_PATH.exists() else ''
@@ -1814,6 +1879,7 @@ Do not claim to have performed an action unless the application confirms it. App
             'INSERT INTO chat_history(user_id,session_id,question,answer,classification,topic) VALUES(?,?,?,?,?,?)',
             (u['id'], conversation_id, question, answer, category, topic)
         )
+    sync_persistent_chat_history()
     return jsonify(answer=answer)
 
 
