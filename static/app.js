@@ -33,11 +33,28 @@ async function loadChatContext(){
   log.scrollTop=log.scrollHeight;
 }
 async function loadChatHistory(){const box=$('#history-list');if(!box)return;const d=await api('/api/chat-history');box.innerHTML=(d.history||[]).map(x=>{const category=String(x.classification||'UNAVAILABLE').toUpperCase();const cls=category.toLowerCase();return `<article class="history-entry"><div class="history-topline"><small>${esc(x.created_at)} · ${esc(x.topic)}</small><span class="classification-badge ${cls}">${esc(category)}</span></div><div class="history-label">USER QUESTION</div><b class="history-text">${esc(x.question)}</b><div class="history-label">ASSISTANT RESPONSE</div><p class="history-text">${esc(x.answer)}</p></div></article>`}).join('')||'<p>No saved conversations yet. Start a conversation in Patient help desk.</p>'}
+async function loadManagedPrices(){
+ const box=$('#managed-prices-list');if(!box)return;
+ const d=await api('/api/price-list');
+ const groups=[
+  ['Clinic services','service',d.services||[]],
+  ['Doctor consultation fees','doctor',d.doctors||[]],
+  ['Medicine prices','medicine',d.medicines||[]]
+ ];
+ box.innerHTML=groups.map(([title,kind,items])=>'<section class="managed-price-group"><h3>'+title+'</h3>'+items.map(x=>'<form class="managed-price-row" data-price-kind="'+kind+'" data-price-id="'+x.id+'"><div><b>'+esc(x.name)+(x.strength?' '+esc(x.strength):'')+'</b><small>'+esc(x.department||'Pharmacy')+(x.stock!==undefined?' · Stock: '+Number(x.stock):'')+'</small></div><label>Price (₹)<input type="number" min="0" max="10000000" step="0.01" name="price" value="'+Number(x.price).toFixed(2)+'" required></label><button type="submit">Save price</button></form>').join('')+'</section>').join('')||'<p>No catalogue items found.</p>';
+}
+$('#managed-prices-list')?.addEventListener('submit',async e=>{
+ const form=e.target.closest('form[data-price-kind]');if(!form)return;
+ e.preventDefault();
+ const kind=form.dataset.priceKind,id=form.dataset.priceId,price=form.elements.price.value;
+ try{const d=await api('/api/prices/'+kind+'/'+id,{method:'PATCH',body:JSON.stringify({price})});alert(d.message);await Promise.all([loadManagedPrices(),loadPriceList(),loadDoctors(),loadMedicines()])}catch(err){notify(err)}
+});
+$('#reload-managed-prices')?.addEventListener('click',()=>loadManagedPrices().catch(notify));
 async function loadPriceList(){const box=$('#assistant-price-list');if(!box)return;const d=await api('/api/price-list');const serviceCards=(d.services||[]).map(x=>`<article class="price-card"><span>${esc(x.department)}</span><b>${esc(x.name)}</b><strong>${money(x.price)}</strong><small>${esc(x.description)}</small></article>`).join('');const doctorCards=(d.doctors||[]).map(x=>`<article class="price-card doctor-price"><span>${esc(x.department)}</span><b>${esc(x.name)}</b><strong>${money(x.price)}</strong><small>Consultation fee</small></article>`).join('');const medicineCards=(d.medicines||[]).map(x=>`<article class="price-card medicine-price"><span>Pharmacy</span><b>${esc(x.name)} ${esc(x.strength)}</b><strong>${money(x.price)}</strong><small>${Number(x.stock)>0?'Listed stock: '+Number(x.stock):'Out of stock'}</small></article>`).join('');box.innerHTML=serviceCards+doctorCards+medicineCards||'<p>No prices have been configured.</p>'}
 $('#refresh-history')?.addEventListener('click',()=>loadChatHistory().catch(notify));
 $('#reload-prices')?.addEventListener('click',()=>loadPriceList().catch(notify));
 async function loadAnalytics(){const d=await api('/api/analytics');$('#analytics-summary').innerHTML=[['Total chatbot queries',d.total_queries],['Appointments',d.appointments],['Registered patients',d.patients]].map(x=>`<article><span>${x[0]}</span><strong>${x[1]}</strong></article>`).join('');$('#topic-list').innerHTML=d.topics.map(x=>`<article><b>${esc(x.label)}</b><strong>${x.count}</strong></article>`).join('')||'<p>No query data yet.</p>';$('#category-list').innerHTML=d.categories.map(x=>`<article><b>${esc(x.label)}</b><strong>${x.count}</strong></article>`).join('')||'<p>No classifications yet.</p>'}
-function loadTab(id){const map={doctors:loadDoctors,appointments:loadAppointments,records:loadRecords,medicines:()=>Promise.all([loadMedicines(),loadMedicineOrders()]),analytics:loadAnalytics,history:loadChatHistory,assistant:loadPriceList,payments:loadBills,emergency:loadEmergencies};if(map[id])map[id]().catch(notify)}
+function loadTab(id){const map={doctors:loadDoctors,appointments:loadAppointments,records:loadRecords,medicines:()=>Promise.all([loadMedicines(),loadMedicineOrders()]),analytics:loadAnalytics,history:loadChatHistory,assistant:loadPriceList,'manage-prices':loadManagedPrices,payments:loadBills,emergency:loadEmergencies};if(map[id])map[id]().catch(notify)}
 
 // Executive dashboard enhancements: live KPIs, workspace search and theme controls.
 async function loadDashboardMetrics(){
