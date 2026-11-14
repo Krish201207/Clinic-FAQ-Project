@@ -698,8 +698,15 @@ def update_catalog_price(kind,item_id):
 @login_required
 def medicines():
     term=request.args.get('q','').strip()
+    try:
+        overrides = get_price_overrides()
+    except Exception:
+        app.logger.exception('Could not load persistent medicine prices')
+        return jsonify(error='Saved medicine prices are temporarily unavailable.'),503
     with db() as c: rows=c.execute('SELECT * FROM medicines WHERE name LIKE ? ORDER BY name',(f'%{term}%',)).fetchall()
-    return jsonify(medicines=[dict(r) for r in rows])
+    items=[dict(r) for r in rows]
+    for item in items: item['price']=effective_price(overrides,'medicine',item['id'],item['price'])
+    return jsonify(medicines=items)
 
 
 @app.route('/api/medicine-orders', methods=['GET','POST'])
@@ -1202,6 +1209,8 @@ def _chat_action(question, user):
             catalog = [dict(r) for r in c.execute(
                 'SELECT id,name,strength,price,stock FROM medicines WHERE stock>0 ORDER BY name'
             ).fetchall()]
+            catalog_prices = get_price_overrides()
+            for item in catalog: item['price'] = effective_price(catalog_prices, 'medicine', item['id'], item['price'])
             if no_reply and pending_order:
                 session.pop('chat_medicine_order', None)
                 return {'answer': 'Okay, I cancelled that medicine order. Nothing was reserved and no bill was created.'}
