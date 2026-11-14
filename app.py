@@ -460,6 +460,64 @@ def cancel_appointment(appointment_id):
         c.execute("UPDATE appointments SET status='Cancelled' WHERE id=?",(appointment_id,))
     return jsonify(success=True)
 
+@app.post('/api/appointments/<int:appointment_id>/reschedule')
+@roles('doctor')
+def reschedule_appointment(appointment_id):
+    u=current_user()
+    data=request.get_json(silent=True) or {}
+    try:
+        new_day=date.fromisoformat(str(data.get('appointment_date','')))
+        new_slot=str(data.get('appointment_time',''))
+        datetime.strptime(new_slot,'%H:%M')
+    except Exception:
+        return jsonify(error='Choose a valid new date and time.'),400
+    if new_day < date.today():
+        return jsonify(error='Appointments cannot be moved into the past.'),400
+    if not u['doctor_profile_id']:
+        return jsonify(error='Your doctor account is not linked to a doctor profile. Contact the administrator.'),403
+    with db() as c:
+        appt=c.execute('SELECT * FROM appointments WHERE id=?',(appointment_id,)).fetchone()
+        if not appt:
+            return jsonify(error='Appointment not found.'),404
+        if appt['doctor_id'] != u['doctor_profile_id']:
+            return jsonify(error='You can only reschedule appointments assigned to you.'),403
+        if appt['status'] != 'Booked':
+            return jsonify(error='Only booked appointments can be rescheduled.'),409
+        doctor=c.execute('SELECT * FROM doctors WHERE id=? AND active=1',(appt['doctor_id'],)).fetchone()
+        if not doctor:
+            return jsonify(error='Your doctor profile is inactive.'),409
+        try:
+            weekday=new_day.strftime('%a')
+            schedule=doctor['days']
+            if '-' in schedule:
+                first,last=schedule.split('-',1)
+                week=['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
+                allowed=week[week.index(first):week.index(last)+1] if first in week and last in week else []
+            else:
+                allowed=[part.strip() for part in schedule.split(',')]
+            if weekday not in allowed:
+                return jsonify(error='The doctor is not scheduled on that day.'),400
+            if not (doctor['start_time'] <= new_slot < doctor['end_time']):
+                return jsonify(error="That time is outside your listed consultation hours."),400
+        except (ValueError,IndexError):
+            return jsonify(error='The doctor schedule is not configured correctly. Contact the administrator.'),500
+        conflict=c.execute("""SELECT 1 FROM appointments
+            WHERE doctor_id=? AND appointment_date=? AND appointment_time=?
+              AND id<>? AND status='Booked'""",
+            (appt['doctor_id'],new_day.isoformat(),new_slot,appointment_id)).fetchone()
+        if conflict:
+            return jsonify(error='That time slot is already booked. Choose another slot.'),409
+        old_description=f"Appointment with {doctor['name']} on {appt['appointment_date']} at {appt['appointment_time']}"
+        new_description=f"Appointment with {doctor['name']} on {new_day.isoformat()} at {new_slot}"
+        c.execute("""UPDATE appointments SET appointment_date=?,appointment_time=?
+                     WHERE id=?""",(new_day.isoformat(),new_slot,appointment_id))
+        # Keep the appointment charge on the patient's bill; update its description, never create a second bill.
+        c.execute("""UPDATE bills SET description=?
+                     WHERE patient_id=? AND description=?""",
+                  (new_description,appt['patient_id'],old_description))
+    return jsonify(success=True,message='Appointment rescheduled. The patient can pay the existing bill under Due payments.')
+
+
 @app.get('/api/price-list')
 @login_required
 def price_list():
