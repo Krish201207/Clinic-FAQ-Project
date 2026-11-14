@@ -653,7 +653,7 @@ def get_audit_logs():
     try: limit=max(1,min(int(request.args.get('limit',200)),500))
     except (TypeError,ValueError): limit=200
     with db() as c:
-        rows=c.execute("""SELECT a.id,a.action,a.entity_type,a.entity_id,a.details,a.old_value,a.new_value,a.created_at,u.name AS actor_name,u.email AS actor_email FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_user_id ORDER BY a.id DESC LIMIT ?""",(limit,)).fetchall()
+        rows=c.execute("""SELECT a.id,a.action,a.entity_type,a.entity_id,a.details,a.old_value,a.new_value,a.created_at,u.name AS actor_name,u.email AS actor_email FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_user_id WHERE a.action='Price updated' ORDER BY a.id DESC LIMIT ?""",(limit,)).fetchall()
     return jsonify(logs=[dict(r) for r in rows])
 
 
