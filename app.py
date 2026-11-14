@@ -530,6 +530,37 @@ def init_db():
                           (name,email,generate_password_hash(pw),'doctor',profile_id))
             else:
                 c.execute("UPDATE users SET role='doctor', doctor_profile_id=? WHERE email=?",(profile_id,email))
+        # Replace unconditional slot uniqueness with uniqueness for active bookings only.
+        appointment_sql = c.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='appointments'"
+        ).fetchone()
+        if appointment_sql and 'UNIQUE(doctor_id, appointment_date, appointment_time)' in (appointment_sql['sql'] or ''):
+            c.execute("""
+                CREATE TABLE appointments_new (
+                    id INTEGER PRIMARY KEY,
+                    patient_id INTEGER NOT NULL REFERENCES users(id),
+                    doctor_id INTEGER NOT NULL REFERENCES doctors(id),
+                    appointment_date TEXT NOT NULL,
+                    appointment_time TEXT NOT NULL,
+                    reason TEXT DEFAULT '',
+                    status TEXT DEFAULT 'Booked',
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            c.execute("""
+                INSERT INTO appointments_new
+                    (id,patient_id,doctor_id,appointment_date,appointment_time,reason,status,created_at)
+                SELECT id,patient_id,doctor_id,appointment_date,appointment_time,reason,status,created_at
+                FROM appointments
+            """)
+            c.execute("DROP TABLE appointments")
+            c.execute("ALTER TABLE appointments_new RENAME TO appointments")
+        c.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_active_doctor_slot
+            ON appointments(doctor_id,appointment_date,appointment_time)
+            WHERE status='Booked'
+        """)
+
 
 init_db()
 try:
@@ -794,6 +825,11 @@ def book_appointment():
                 allowed_days = [part.strip() for part in schedule.split(',')]
             if weekday not in allowed_days: return jsonify(error='This doctor is not scheduled on that day.'),400
             if not (doctor['start_time'] <= slot < doctor['end_time']): return jsonify(error='That time is outside this doctor\'s listed hours.'),400
+            occupied=c.execute("""SELECT 1 FROM appointments
+                WHERE doctor_id=? AND appointment_date=? AND appointment_time=?
+                  AND status='Booked'""",(doctor_id,day.isoformat(),slot)).fetchone()
+            if occupied:
+                return jsonify(error='That doctor has already been booked for this time slot. Please choose another slot.'),409
             c.execute('INSERT INTO appointments(patient_id,doctor_id,appointment_date,appointment_time,reason) VALUES(?,?,?,?,?)',(u['id'],doctor_id,day.isoformat(),slot,str(data.get('reason',''))[:300]))
             price_overrides = get_price_overrides()
             bill_amount=round(effective_price(price_overrides, 'doctor', doctor_id, doctor['consultation_fee']),2)
@@ -1123,7 +1159,7 @@ def payment_test_page(bill_id):
     return render_template_string(page,bill=bill,status=status,result=result)
 
 @app.post('/api/medicines/<int:medicine_id>/purchase')
-@roles('admin','reception')
+@roles('admin')
 def purchase_medicine_stock(medicine_id):
     d=request.get_json(silent=True) or {}
     try:q=int(d.get('quantity'));cost=float(d.get('cost') or 0)
