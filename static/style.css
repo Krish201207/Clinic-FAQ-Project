@@ -77,3 +77,19 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
 .reschedule-fields input{min-width:145px;padding:7px 9px;font-size:11px}
 .reschedule-fields button{padding:8px 12px}
 .dark-mode .reschedule-fields{background:#142d38;border-color:#34505b}
+
+.profile-notifications-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:12px;padding-top:10px;border-top:1px solid var(--line);font-size:12px;color:var(--navy)}
+.notification-count{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 5px;border-radius:20px;background:#b42318;color:#fff;font-size:10px}
+.notification-count[hidden]{display:none}
+.notification-clear{padding:4px 7px;background:#edf6f5;color:#18766f;font-size:10px}
+.profile-notifications{display:grid;gap:7px;max-height:260px;overflow:auto;margin-top:5px}
+.profile-notification{display:block;width:100%;padding:9px 10px;text-align:left;background:#f5f9fa;color:var(--ink);border:1px solid #e1eaeb;border-radius:9px}
+.profile-notification.unread{background:#edf8f6;border-color:#a9d8d0}
+.profile-notification b,.profile-notification small,.profile-notification time{display:block}
+.profile-notification b{font-size:11px;color:var(--navy)}
+.profile-notification small{font-size:10px;line-height:1.4;color:#62777e;white-space:normal;margin-top:3px}
+.profile-notification time{font-size:9px;color:#91a0a5;margin-top:5px}
+.notification-empty{font-size:11px;color:var(--muted);padding:8px;margin:0}
+.dark-mode .profile-notifications-head{color:#e8f0f2;border-color:#34505b}
+.dark-mode .profile-notification,.dark-mode .profile-notification.unread{background:#203b47;border-color:#34505b;color:#e8f0f2}
+.dark-mode .profile-notification b{color:#e8f0f2}
