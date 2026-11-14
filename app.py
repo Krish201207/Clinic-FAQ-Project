@@ -897,7 +897,7 @@ def reschedule_appointment(appointment_id):
             return jsonify(error='The doctor schedule is not configured correctly. Contact the administrator.'),500
         conflict=c.execute("""SELECT 1 FROM appointments
             WHERE doctor_id=? AND appointment_date=? AND appointment_time=?
-              AND id<>?""",
+              AND status='Booked' AND id<>?""",
             (appt['doctor_id'],new_day.isoformat(),new_slot,appointment_id)).fetchone()
         if conflict:
             return jsonify(error='That time slot is already occupied. Choose another slot.'),409
