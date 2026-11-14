@@ -1,4 +1,4 @@
-import os, re, sqlite3, uuid, csv, io
+import os, re, sqlite3, uuid, csv, io, math
 from openpyxl import Workbook
 from pathlib import Path
 from functools import wraps
