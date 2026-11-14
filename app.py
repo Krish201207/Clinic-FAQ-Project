@@ -1,4 +1,4 @@
-import os, re, sqlite3, uuid, csv, io, math
+import os, re, sqlite3, uuid, csv, io, math, tempfile
 from openpyxl import Workbook
 from pathlib import Path
 from functools import wraps
@@ -1533,6 +1533,33 @@ Do not claim to have performed an action unless the application confirms it. App
             (u['id'], conversation_id, question, answer, category, topic)
         )
     return jsonify(answer=answer)
+
+
+@app.get('/admin/database-export')
+@roles('admin')
+def export_database():
+    """Create a consistent SQLite backup, including committed WAL contents."""
+    if not DB_PATH.exists():
+        return jsonify(error='The SQLite database file was not found on this instance.'), 404
+    fd, backup_path = tempfile.mkstemp(prefix='clinic-db-backup-', suffix='.sqlite')
+    os.close(fd)
+    try:
+        with sqlite3.connect(str(DB_PATH), timeout=30) as source:
+            with sqlite3.connect(backup_path) as destination:
+                source.backup(destination)
+        response = send_file(
+            backup_path,
+            mimetype='application/vnd.sqlite3',
+            as_attachment=True,
+            download_name='clinic-database-backup.sqlite'
+        )
+        response.call_on_close(lambda: os.path.exists(backup_path) and os.remove(backup_path))
+        return response
+    except Exception:
+        if os.path.exists(backup_path):
+            os.remove(backup_path)
+        app.logger.exception('Database export failed')
+        return jsonify(error='Database export failed. Check the Render logs.'), 500
 
 
 @app.get('/health')
