@@ -562,9 +562,9 @@ def reschedule_appointment(appointment_id):
 @login_required
 def price_list():
     with db() as c:
-        services = [dict(r) for r in c.execute('SELECT name,department,price,description FROM hospital_services WHERE active=1 ORDER BY department,name').fetchall()]
-        doctors = [dict(r) for r in c.execute('SELECT name,department,consultation_fee AS price FROM doctors WHERE active=1 ORDER BY department,name').fetchall()]
-        medicines = [dict(r) for r in c.execute('SELECT name,strength,price,stock FROM medicines ORDER BY name').fetchall()]
+        services = [dict(r) for r in c.execute('SELECT id,name,department,price,description FROM hospital_services WHERE active=1 ORDER BY department,name').fetchall()]
+        doctors = [dict(r) for r in c.execute('SELECT id,name,department,consultation_fee AS price FROM doctors WHERE active=1 ORDER BY department,name').fetchall()]
+        medicines = [dict(r) for r in c.execute('SELECT id,name,strength,price,stock FROM medicines ORDER BY name').fetchall()]
     return jsonify(services=services, doctors=doctors, medicines=medicines)
 
 
