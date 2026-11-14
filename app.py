@@ -543,7 +543,7 @@ def book_appointment():
             if not (doctor['start_time'] <= slot < doctor['end_time']): return jsonify(error='That time is outside this doctor\'s listed hours.'),400
             c.execute('INSERT INTO appointments(patient_id,doctor_id,appointment_date,appointment_time,reason) VALUES(?,?,?,?,?)',(u['id'],doctor_id,day.isoformat(),slot,str(data.get('reason',''))[:300]))
             price_overrides = get_price_overrides()
-        bill_amount=round(effective_price(price_overrides, 'doctor', doctor_id, doctor['consultation_fee']),2)
+            bill_amount=round(effective_price(price_overrides, 'doctor', doctor_id, doctor['consultation_fee']),2)
             bill_id=None
             if u['role']=='patient' and bill_amount>0:
                 bill_desc=f"Appointment with {doctor['name']} on {day.isoformat()} at {slot}"
