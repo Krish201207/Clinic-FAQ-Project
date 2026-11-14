@@ -91,6 +91,64 @@ def db():
     return con
 
 
+
+def get_price_overrides():
+    """Read persistent catalogue price overrides from Supabase."""
+    url = os.getenv('DATABASE_URL', '').strip()
+    if not url:
+        raise RuntimeError('DATABASE_URL is not configured.')
+    import psycopg
+    with psycopg.connect(url, connect_timeout=8) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS clinic_price_overrides (
+                    kind TEXT NOT NULL CHECK (kind IN ('service','doctor','medicine')),
+                    item_id INTEGER NOT NULL,
+                    price NUMERIC(12,2) NOT NULL CHECK (price >= 0),
+                    changed_by TEXT NOT NULL DEFAULT '',
+                    old_price NUMERIC(12,2),
+                    changed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (kind, item_id)
+                )
+            """)
+            cur.execute("SELECT kind,item_id,price FROM clinic_price_overrides")
+            rows = cur.fetchall()
+    return {(k, int(i)): float(p) for k, i, p in rows}
+
+
+def effective_price(overrides, kind, item_id, fallback):
+    return overrides.get((kind, int(item_id)), float(fallback or 0))
+
+
+def save_price_override(kind, item_id, price, old_price, actor):
+    url = os.getenv('DATABASE_URL', '').strip()
+    if not url:
+        raise RuntimeError('DATABASE_URL is not configured.')
+    import psycopg
+    with psycopg.connect(url, connect_timeout=8) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS clinic_price_overrides (
+                    kind TEXT NOT NULL CHECK (kind IN ('service','doctor','medicine')),
+                    item_id INTEGER NOT NULL,
+                    price NUMERIC(12,2) NOT NULL CHECK (price >= 0),
+                    changed_by TEXT NOT NULL DEFAULT '',
+                    old_price NUMERIC(12,2),
+                    changed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (kind, item_id)
+                )
+            """)
+            cur.execute("""
+                INSERT INTO clinic_price_overrides
+                    (kind,item_id,price,changed_by,old_price,changed_at)
+                VALUES (%s,%s,%s,%s,%s,CURRENT_TIMESTAMP)
+                ON CONFLICT (kind,item_id) DO UPDATE SET
+                    old_price = clinic_price_overrides.price,
+                    price = EXCLUDED.price,
+                    changed_by = EXCLUDED.changed_by,
+                    changed_at = CURRENT_TIMESTAMP
+            """, (kind,item_id,price,actor))
+
 def init_db():
     with db() as c:
         c.execute('PRAGMA journal_mode=WAL')
@@ -484,7 +542,8 @@ def book_appointment():
             if weekday not in allowed_days: return jsonify(error='This doctor is not scheduled on that day.'),400
             if not (doctor['start_time'] <= slot < doctor['end_time']): return jsonify(error='That time is outside this doctor\'s listed hours.'),400
             c.execute('INSERT INTO appointments(patient_id,doctor_id,appointment_date,appointment_time,reason) VALUES(?,?,?,?,?)',(u['id'],doctor_id,day.isoformat(),slot,str(data.get('reason',''))[:300]))
-            bill_amount=round(float(doctor['consultation_fee'] or 0),2)
+            price_overrides = get_price_overrides()
+        bill_amount=round(effective_price(price_overrides, 'doctor', doctor_id, doctor['consultation_fee']),2)
             bill_id=None
             if u['role']=='patient' and bill_amount>0:
                 bill_desc=f"Appointment with {doctor['name']} on {day.isoformat()} at {slot}"
@@ -573,10 +632,18 @@ def reschedule_appointment(appointment_id):
 @app.get('/api/price-list')
 @login_required
 def price_list():
+    try:
+        price_overrides = get_price_overrides()
+    except Exception:
+        app.logger.exception('Could not load persistent catalogue prices')
+        return jsonify(error='Saved prices are temporarily unavailable.'), 503
     with db() as c:
         services = [dict(r) for r in c.execute('SELECT id,name,department,price,description FROM hospital_services WHERE active=1 ORDER BY department,name').fetchall()]
         doctors = [dict(r) for r in c.execute('SELECT id,name,department,consultation_fee AS price FROM doctors WHERE active=1 ORDER BY department,name').fetchall()]
         medicines = [dict(r) for r in c.execute('SELECT id,name,strength,price,stock FROM medicines ORDER BY name').fetchall()]
+    for r in services: r['price'] = effective_price(price_overrides, 'service', r['id'], r['price'])
+    for r in doctors: r['price'] = effective_price(price_overrides, 'doctor', r['id'], r['price'])
+    for r in medicines: r['price'] = effective_price(price_overrides, 'medicine', r['id'], r['price'])
     return jsonify(services=services, doctors=doctors, medicines=medicines)
 
 
@@ -608,16 +675,23 @@ def update_catalog_price(kind,item_id):
     if kind not in targets:
         return jsonify(error='Unknown price category.'),404
     table,column=targets[kind]
-    with db() as c:
-        before=c.execute(f'SELECT id,{column} AS price FROM {table} WHERE id=?',(item_id,)).fetchone()
-        if not before:
-            return jsonify(error='Catalogue item not found.'),404
-        old_price=float(before['price'] or 0)
-        cur=c.execute(f'UPDATE {table} SET {column}=? WHERE id=?',(price,item_id))
-        row=c.execute(f'SELECT id,{column} AS price FROM {table} WHERE id=?',(item_id,)).fetchone()
-        c.execute("""INSERT INTO audit_logs(actor_user_id,action,entity_type,entity_id,details,old_value,new_value) VALUES(?,?,?,?,?,?,?)""",
-                  (current_user()['id'],'Price updated',kind,item_id,f"{kind.title()} price changed from ₹{old_price:.2f} to ₹{price:.2f}",f"₹{old_price:.2f}",f"₹{price:.2f}"))
-    return jsonify(success=True,id=row['id'],price=row['price'],message='Price updated successfully.')
+    try:
+        overrides = get_price_overrides()
+        with db() as c:
+            before=c.execute(f'SELECT id,{column} AS price FROM {table} WHERE id=?',(item_id,)).fetchone()
+            if not before:
+                return jsonify(error='Catalogue item not found.'),404
+            old_price=effective_price(overrides,kind,item_id,before['price'])
+            actor=current_user().get('email') or str(current_user()['id'])
+            save_price_override(kind,item_id,price,old_price,actor)
+            c.execute(f'UPDATE {table} SET {column}=? WHERE id=?',(price,item_id))
+            row=c.execute(f'SELECT id,{column} AS price FROM {table} WHERE id=?',(item_id,)).fetchone()
+            c.execute("""INSERT INTO audit_logs(actor_user_id,action,entity_type,entity_id,details,old_value,new_value) VALUES(?,?,?,?,?,?,?)""",
+                      (current_user()['id'],'Price updated',kind,item_id,f"{kind.title()} price changed from ₹{old_price:.2f} to ₹{price:.2f}",f"₹{old_price:.2f}",f"₹{price:.2f}"))
+    except Exception:
+        app.logger.exception('Persistent price update failed')
+        return jsonify(error='Price was not saved. Check DATABASE_URL and Supabase availability.'),503
+    return jsonify(success=True,id=row['id'],price=price,message='Price saved to Supabase.')
 
 
 @app.get('/api/medicines')
@@ -648,11 +722,16 @@ def medicine_orders():
     except Exception: return jsonify(error='Choose a medicine, quantity, pickup date, and pickup time.'),400
     if quantity<1:return jsonify(error='Quantity must be at least one.'),400
     if pickup_day<date.today():return jsonify(error='Pickup date cannot be in the past.'),400
+    try:
+        price_overrides = get_price_overrides()
+    except Exception:
+        app.logger.exception('Could not load persistent medicine prices')
+        return jsonify(error='Saved medicine prices are temporarily unavailable.'),503
     with db() as c:
         medicine=c.execute('SELECT id,name,strength,price,stock FROM medicines WHERE id=?',(medicine_id,)).fetchone()
         if not medicine:return jsonify(error='Medicine not found.'),404
         if medicine['stock']<quantity:return jsonify(error='Not enough stock for that quantity.'),409
-        total=round(float(medicine['price'] or 0)*quantity,2)
+        total=round(effective_price(price_overrides, 'medicine', medicine_id, medicine['price'])*quantity,2)
         c.execute('UPDATE medicines SET stock=stock-?,updated_at=CURRENT_TIMESTAMP WHERE id=?',(quantity,medicine_id))
         cur=c.execute('INSERT INTO medicine_orders(patient_id,medicine_id,quantity,pickup_date,pickup_time) VALUES(?,?,?,?,?)',(u['id'],medicine_id,quantity,pickup_day.isoformat(),pickup_time))
         bill_desc=f"Medicine order #{cur.lastrowid}: {medicine['name']} {medicine['strength'] or ''} × {quantity}".strip()
@@ -1104,12 +1183,13 @@ def _chat_action(question, user):
             return {'answer': f'Appointment #{appt_id} has been cancelled.'}
 
         if price_intent:
-            services = c.execute('SELECT name,department,price FROM hospital_services WHERE active=1 ORDER BY department,name').fetchall()
-            doctor_fees = c.execute('SELECT name,department,consultation_fee FROM doctors WHERE active=1 ORDER BY department,name').fetchall()
+            price_overrides = get_price_overrides()
+            services = c.execute('SELECT id,name,department,price FROM hospital_services WHERE active=1 ORDER BY department,name').fetchall()
+            doctor_fees = c.execute('SELECT id,name,department,consultation_fee FROM doctors WHERE active=1 ORDER BY department,name').fetchall()
             lines = ['Clinic service price list:']
-            lines.extend(f"{r['name']} ({r['department']}) — ₹{r['price']:.2f}" for r in services)
+            lines.extend(f"{r['name']} ({r['department']}) — ₹{effective_price(price_overrides, 'service', r['id'], r['price']):.2f}" for r in services)
             lines.append('Doctor consultation fees:')
-            lines.extend(f"{r['name']} ({r['department']}) — ₹{r['consultation_fee']:.2f}" for r in doctor_fees)
+            lines.extend(f"{r['name']} ({r['department']}) — ₹{effective_price(price_overrides, 'doctor', r['id'], r['consultation_fee']):.2f}" for r in doctor_fees)
             lines.append('Medicine prices are available in the Medicine inventory section. Confirm charges with reception before payment.')
             return {'answer': '\n'.join(lines)}
 
@@ -1135,7 +1215,7 @@ def _chat_action(question, user):
                     if med['stock'] < qty:
                         session.pop('chat_medicine_order', None)
                         return {'answer': f"Only {med['stock']} units of {med['name']} remain. Please start again with a lower quantity."}
-                    total = round(float(med['price'] or 0) * qty, 2)
+                    total = round(effective_price(get_price_overrides(), 'medicine', med['id'], med['price']) * qty, 2)
                     pickup_day = date.fromisoformat(pending_order['pickup_date'])
                     pickup_time = pending_order['pickup_time']
                     c.execute('UPDATE medicines SET stock=stock-?,updated_at=CURRENT_TIMESTAMP WHERE id=?', (qty, med['id']))
@@ -1402,7 +1482,8 @@ def _chat_action(question, user):
                 return {'answer': 'That doctor already has an appointment at that time. Please choose another time.'}
             appointment_id = c.execute('SELECT last_insert_rowid()').fetchone()[0]
             session.pop('chat_booking', None)
-            return {'answer': f"Appointment booked successfully. Confirmation #{appointment_id}: {doc['name']} ({doc['department']}), {day} at {slot}. Consultation fee listed: ₹{doc['consultation_fee']:.2f}."}
+            current_fee = effective_price(get_price_overrides(), 'doctor', doc['id'], doc['consultation_fee'])
+            return {'answer': f"Appointment booked successfully. Confirmation #{appointment_id}: {doc['name']} ({doc['department']}), {day} at {slot}. Consultation fee listed: ₹{current_fee:.2f}."}
 
     return None
 
