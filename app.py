@@ -96,7 +96,7 @@ def get_price_overrides():
     """Read persistent catalogue price overrides from Supabase."""
     url = os.getenv('DATABASE_URL', '').strip()
     if not url:
-        raise RuntimeError('DATABASE_URL is not configured.')
+        return {}
     import psycopg
     with psycopg.connect(url, connect_timeout=8) as conn:
         with conn.cursor() as cur:
@@ -147,7 +147,7 @@ def save_price_override(kind, item_id, price, old_price, actor):
                     price = EXCLUDED.price,
                     changed_by = EXCLUDED.changed_by,
                     changed_at = CURRENT_TIMESTAMP
-            """, (kind,item_id,price,actor))
+            """, (kind,item_id,price,actor,old_price))
 
 def init_db():
     with db() as c:
