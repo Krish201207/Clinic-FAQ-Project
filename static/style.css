@@ -93,3 +93,17 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
 .dark-mode .profile-notifications-head{color:#e8f0f2;border-color:#34505b}
 .dark-mode .profile-notification,.dark-mode .profile-notification.unread{background:#203b47;border-color:#34505b;color:#e8f0f2}
 .dark-mode .profile-notification b{color:#e8f0f2}
+
+.managed-price-group{margin:18px 0;padding:15px;background:#fff;border:1px solid var(--line);border-radius:12px}
+.managed-price-group h3{margin:0 0 12px;color:var(--navy)}
+.managed-price-row{display:grid;grid-template-columns:minmax(150px,1fr) minmax(130px,180px) auto;align-items:end;gap:12px;padding:10px 0;border-top:1px solid var(--line)}
+.managed-price-row b,.managed-price-row small{display:block}
+.managed-price-row b{font-size:12px;color:var(--ink)}
+.managed-price-row small{font-size:10px;color:var(--muted);margin-top:3px}
+.managed-price-row label{font-size:10px;color:var(--muted);font-weight:700}
+.managed-price-row input{padding:8px;font-size:12px}
+.managed-price-row button{padding:9px 12px}
+.dark-mode .managed-price-group{background:#1b3441;border-color:#34505b}
+.dark-mode .managed-price-row{border-color:#34505b}
+.dark-mode .managed-price-row b{color:#e8f0f2}
+@media(max-width:650px){.managed-price-row{grid-template-columns:1fr 1fr}.managed-price-row>div{grid-column:1/-1}.managed-price-row button{grid-column:1/-1}}
