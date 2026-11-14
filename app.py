@@ -123,6 +123,10 @@ def init_db():
           id INTEGER PRIMARY KEY, patient_id INTEGER NOT NULL REFERENCES users(id),
           doctor_id INTEGER REFERENCES users(id), record_type TEXT NOT NULL,
           notes TEXT DEFAULT '', file_name TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE IF NOT EXISTS notifications(
+          id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id),
+          title TEXT NOT NULL, message TEXT NOT NULL, notification_type TEXT DEFAULT 'info',
+          is_read INTEGER NOT NULL DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
         CREATE TABLE IF NOT EXISTS chat_history(
           id INTEGER PRIMARY KEY, user_id INTEGER REFERENCES users(id), session_id TEXT,
           question TEXT NOT NULL, answer TEXT NOT NULL, classification TEXT DEFAULT 'UNAVAILABLE',
@@ -396,6 +400,38 @@ def clear_chat_history():
 def me():
     u=current_user(); return jsonify(dict(u))
 
+@app.get('/api/notifications')
+@login_required
+def get_notifications():
+    u=current_user()
+    with db() as c:
+        rows=c.execute("""SELECT id,title,message,notification_type,is_read,created_at
+                          FROM notifications WHERE user_id=?
+                          ORDER BY id DESC LIMIT 50""",(u['id'],)).fetchall()
+        unread=c.execute("SELECT COUNT(*) FROM notifications WHERE user_id=? AND is_read=0",(u['id'],)).fetchone()[0]
+    return jsonify(notifications=[dict(r) for r in rows],unread_count=unread)
+
+
+@app.patch('/api/notifications/<int:notification_id>/read')
+@login_required
+def mark_notification_read(notification_id):
+    u=current_user()
+    with db() as c:
+        cur=c.execute("UPDATE notifications SET is_read=1 WHERE id=? AND user_id=?",(notification_id,u['id']))
+        if not cur.rowcount:
+            return jsonify(error='Notification not found.'),404
+    return jsonify(success=True)
+
+
+@app.post('/api/notifications/read-all')
+@login_required
+def mark_all_notifications_read():
+    u=current_user()
+    with db() as c:
+        c.execute("UPDATE notifications SET is_read=1 WHERE user_id=?",(u['id'],))
+    return jsonify(success=True)
+
+
 @app.get('/api/doctors')
 @login_required
 def doctors():
@@ -515,7 +551,11 @@ def reschedule_appointment(appointment_id):
         c.execute("""UPDATE bills SET description=?
                      WHERE patient_id=? AND description=?""",
                   (new_description,appt['patient_id'],old_description))
-    return jsonify(success=True,message='Appointment rescheduled. The patient can pay the existing bill under Due payments.')
+        c.execute("""INSERT INTO notifications(user_id,title,message,notification_type)
+                     VALUES(?,?,?,'appointment')""",
+                  (appt['patient_id'],'Appointment rescheduled',
+                   f"Your appointment with {doctor['name']} has been moved from {appt['appointment_date']} at {appt['appointment_time']} to {new_day.isoformat()} at {new_slot}. Check Appointments for the updated details."))
+    return jsonify(success=True,message='Appointment rescheduled. The patient has been notified and can pay the existing bill under Due payments.')
 
 
 @app.get('/api/price-list')
