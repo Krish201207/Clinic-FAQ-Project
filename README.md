@@ -72,8 +72,6 @@ SQLite remains in use for much of the application's data. The PostgreSQL integra
    python app.py
    ```
 
-7. Open http://127.0.0.1:5000 in a browser.
-
 The SQLite database is initialized by the application. Keep the required model files (`Embeddings.vec` and `classifier_weights.txt`) alongside the Python source files.
 
 ## Important environment variables
