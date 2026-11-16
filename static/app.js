@@ -143,6 +143,11 @@ refreshButton?.addEventListener('click', async () => {
   catch (error) { notify(error); }
 })();
 
+// Recheck appointment expiry while the dashboard is open.
+setInterval(() => {
+  if (document.visibilityState === 'visible') loadAppointments().catch(error => console.warn('Appointment refresh:', error.message));
+}, 60000);
+
 
 let currentTestBill=null;
 async function loadBills(){if(!document.getElementById('bills-list'))return;const d=await api('/api/bills');$('#bills-list').innerHTML=(d.bills||[]).map(b=>{const paid=String(b.status).toLowerCase().startsWith('paid');return '<article class="bill-row"><div><b>Bill #'+b.id+' · '+esc(b.description)+'</b><small>'+(b.patient_name?'Patient: '+esc(b.patient_name)+' · ':'')+money(b.amount)+'</small><small>'+esc(b.created_at)+'</small></div><span class="stock-pill '+(paid?'in-stock':'out-stock')+'">'+(paid?'✓ PAYMENT PROCESSED':'! PAYMENT PENDING')+'</span>'+(paid?'<small class="bill-status-detail">'+esc(b.status)+(b.paid_at?' · '+esc(b.paid_at):'')+'</small>':'<button onclick="showPaymentQR('+b.id+','+Number(b.amount)+')">Generate QR to pay</button>')+'</article>'}).join('')||'<p>No bills found.</p>'}
