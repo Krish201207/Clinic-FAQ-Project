@@ -255,23 +255,21 @@ def sync_persistent_appointments():
                     status=excluded.status
             """, row)
 
-def sync_persistent_chat_history():
-    """Keep conversation history in Supabase, keyed to the same signed-in user."""
+def ensure_chat_archive():
+    """Create the durable admin-only archive and import records from the older archive table."""
     url = os.getenv('DATABASE_URL', '').strip()
     if not url:
-        return
+        raise RuntimeError('DATABASE_URL is not configured; admin chat archiving is unavailable.')
     import psycopg
-    with db() as local:
-        local_rows = local.execute("""
-            SELECT id,user_id,session_id,question,answer,classification,topic,created_at
-            FROM chat_history
-        """).fetchall()
     with psycopg.connect(url, connect_timeout=10) as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS clinic_chat_history (
-                    id BIGINT PRIMARY KEY,
+                CREATE TABLE IF NOT EXISTS clinic_chat_archive (
+                    archive_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                    legacy_id BIGINT UNIQUE,
                     user_id BIGINT NOT NULL,
+                    user_name TEXT NOT NULL DEFAULT '',
+                    user_email TEXT NOT NULL DEFAULT '',
                     session_id TEXT,
                     question TEXT NOT NULL,
                     answer TEXT NOT NULL,
@@ -280,39 +278,57 @@ def sync_persistent_chat_history():
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text
                 )
             """)
-            for row in local_rows:
+            cur.execute("SELECT to_regclass('public.clinic_chat_history')")
+            if cur.fetchone()[0]:
                 cur.execute("""
-                    INSERT INTO clinic_chat_history
-                        (id,user_id,session_id,question,answer,classification,topic,created_at)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
-                    ON CONFLICT (id) DO UPDATE SET
-                        user_id=EXCLUDED.user_id,
-                        session_id=EXCLUDED.session_id,
-                        question=EXCLUDED.question,
-                        answer=EXCLUDED.answer,
-                        classification=EXCLUDED.classification,
-                        topic=EXCLUDED.topic
-                """, tuple(row))
-            cur.execute("""
-                SELECT id,user_id,session_id,question,answer,classification,topic,created_at
-                FROM clinic_chat_history ORDER BY id
-            """)
-            remote_rows = cur.fetchall()
+                    INSERT INTO clinic_chat_archive
+                        (legacy_id,user_id,user_name,user_email,session_id,question,answer,
+                         classification,topic,created_at)
+                    SELECT h.id,h.user_id,COALESCE(u.name,''),COALESCE(u.email,''),
+                           h.session_id,h.question,h.answer,h.classification,h.topic,h.created_at
+                    FROM clinic_chat_history h
+                    LEFT JOIN clinic_users u ON u.id=h.user_id
+                    ON CONFLICT (legacy_id) DO NOTHING
+                """)
+
+
+def archive_chat_message(user_id, conversation_id, question, answer, classification, topic):
+    """Save each message to PostgreSQL for administrators without restoring it to patient chat."""
+    url = os.getenv('DATABASE_URL', '').strip()
+    if not url:
+        raise RuntimeError('DATABASE_URL is not configured; admin chat archiving is unavailable.')
+    import psycopg
     with db() as local:
-        for row in remote_rows:
-            if not local.execute('SELECT 1 FROM users WHERE id=?',(row[1],)).fetchone():
-                continue
-            local.execute("""
-                INSERT INTO chat_history
-                    (id,user_id,session_id,question,answer,classification,topic,created_at)
-                VALUES(?,?,?,?,?,?,?,?)
-                ON CONFLICT(id) DO UPDATE SET
-                    session_id=excluded.session_id,
-                    question=excluded.question,
-                    answer=excluded.answer,
-                    classification=excluded.classification,
-                    topic=excluded.topic
-            """, row)
+        user = local.execute('SELECT name,email FROM users WHERE id=?', (user_id,)).fetchone()
+    if not user:
+        raise RuntimeError('Could not identify the user for chat archiving.')
+    ensure_chat_archive()
+    with psycopg.connect(url, connect_timeout=10) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO clinic_chat_archive
+                    (user_id,user_name,user_email,session_id,question,answer,classification,topic)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+            """, (user_id,user['name'],user['email'],conversation_id,question,answer,classification,topic))
+
+
+def fetch_admin_chat_archive(limit=500):
+    """Return archived conversations for the administrator only."""
+    url = os.getenv('DATABASE_URL', '').strip()
+    if not url:
+        raise RuntimeError('DATABASE_URL is not configured.')
+    import psycopg
+    ensure_chat_archive()
+    with psycopg.connect(url, connect_timeout=10) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT archive_id AS id,user_id,user_name,user_email,session_id,
+                       question,answer,classification,topic,created_at
+                FROM clinic_chat_archive
+                ORDER BY archive_id DESC LIMIT %s
+            """, (limit,))
+            columns = [item.name for item in cur.description]
+            return [dict(zip(columns,row)) for row in cur.fetchall()]
 
 def save_persistent_account(user_id):
     """Persist a newly registered or updated account before reporting success."""
@@ -563,10 +579,17 @@ def init_db():
 
 
 init_db()
+# Patient-facing chat is intentionally temporary. Clear it whenever this server
+# process starts; the separate PostgreSQL archive is never cleared.
+try:
+    with db() as c:
+        c.execute('DELETE FROM chat_history')
+except Exception:
+    app.logger.exception('Could not clear temporary patient chat history on startup')
+
 try:
     sync_persistent_accounts()
     sync_persistent_appointments()
-    sync_persistent_chat_history()
 except Exception:
     app.logger.exception('Could not synchronize persistent Supabase accounts')
 
@@ -710,8 +733,20 @@ def history_page(): return render_template('history.html', user=current_user())
 @login_required
 def chat_history():
     u=current_user()
+    if u['role'] == 'admin':
+        try:
+            return jsonify(history=fetch_admin_chat_archive())
+        except Exception:
+            app.logger.exception('Could not load the persistent admin chat archive')
+            return jsonify(error='The admin chat archive is temporarily unavailable. Check DATABASE_URL and PostgreSQL.'),503
+    conversation_id = _chat_conversation_id()
     with db() as c:
-        rows=c.execute('SELECT id,question,answer,classification,topic,created_at FROM chat_history WHERE user_id=? ORDER BY id DESC LIMIT 200',(u['id'],)).fetchall()
+        rows=c.execute(
+            '''SELECT id,question,answer,classification,topic,created_at
+               FROM chat_history WHERE user_id=? AND session_id=?
+               ORDER BY id DESC LIMIT 200''',
+            (u['id'],conversation_id)
+        ).fetchall()
         history=[]
         for row in rows:
             item=dict(row)
@@ -720,10 +755,6 @@ def chat_history():
                 c.execute('UPDATE chat_history SET classification=? WHERE id=?',
                           (item['classification'],item['id']))
             history.append(item)
-    sync_persistent_chat_history()
-    with db() as c:
-        rows=c.execute('SELECT id,question,answer,classification,topic,created_at FROM chat_history WHERE user_id=? ORDER BY id DESC LIMIT 200',(u['id'],)).fetchall()
-        history=[dict(row) for row in rows]
     return jsonify(history=history)
 
 
@@ -1878,7 +1909,7 @@ def ask():
                 'INSERT INTO chat_history(user_id,session_id,question,answer,classification,topic) VALUES(?,?,?,?,?,?)',
                 (u['id'], conversation_id, question, answer, category, topic)
             )
-        sync_persistent_chat_history()
+        archive_chat_message(u['id'], conversation_id, question, answer, category, topic)
         return jsonify(answer=answer, action=True)
 
     faq = FAQ_PATH.read_text(encoding='utf-8') if FAQ_PATH.exists() else ''
@@ -1929,7 +1960,7 @@ Do not claim to have performed an action unless the application confirms it. App
             'INSERT INTO chat_history(user_id,session_id,question,answer,classification,topic) VALUES(?,?,?,?,?,?)',
             (u['id'], conversation_id, question, answer, category, topic)
         )
-    sync_persistent_chat_history()
+    archive_chat_message(u['id'], conversation_id, question, answer, category, topic)
     return jsonify(answer=answer)
 
 
