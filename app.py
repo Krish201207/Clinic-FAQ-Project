@@ -1321,11 +1321,10 @@ def create_emergency():
 @login_required
 def records():
     u=current_user()
-    if u['role'] not in ('patient','doctor','admin'): return jsonify(error='You do not have permission to view health records.'),403
+    if u['role'] not in ('patient','doctor'): return jsonify(error='You do not have permission to view health records.'),403
     with db() as c:
         if u['role']=='patient': rows=c.execute('SELECT r.*,u.name patient_name FROM health_records r LEFT JOIN users u ON u.id=r.patient_id WHERE r.patient_id=? ORDER BY r.id DESC',(u['id'],)).fetchall()
-        elif u['role']=='doctor': rows=c.execute('SELECT r.*,u.name patient_name FROM health_records r LEFT JOIN users u ON u.id=r.patient_id WHERE r.doctor_id=? ORDER BY r.id DESC LIMIT 300',(u['id'],)).fetchall()
-        else: rows=c.execute('SELECT r.*,u.name patient_name FROM health_records r LEFT JOIN users u ON u.id=r.patient_id ORDER BY r.id DESC LIMIT 300').fetchall()
+        else: rows=c.execute('SELECT r.*,u.name patient_name FROM health_records r LEFT JOIN users u ON u.id=r.patient_id WHERE r.doctor_id=? ORDER BY r.id DESC LIMIT 300',(u['id'],)).fetchall()
     return jsonify(records=[dict(r) for r in rows])
 
 @app.post('/api/records')
