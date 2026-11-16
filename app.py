@@ -1039,9 +1039,6 @@ def reschedule_appointment(appointment_id):
                    f"{appt['appointment_date']} {appt['appointment_time']}",f"{new_day.isoformat()} {new_slot}"))
         notification_title = 'Appointment rescheduled'
         notification_message = f"Your appointment with {doctor['name']} has been moved from {appt['appointment_date']} at {appt['appointment_time']} to {new_day.isoformat()} at {new_slot}. Check Appointments for the updated details."
-        c.execute("""INSERT INTO notifications(user_id,title,message,notification_type)
-                     VALUES(?,?,?,'appointment')""",
-                  (appt['patient_id'],notification_title,notification_message))
     try:
         archive_notification_for_user(appt['patient_id'],notification_title,notification_message,'appointment')
     except Exception:
