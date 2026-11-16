@@ -772,26 +772,109 @@ def clear_chat_history():
 def me():
     u=current_user(); return jsonify(dict(u))
 
+def ensure_notification_archive():
+    """Keep notifications in PostgreSQL under the user's email, not a local SQLite ID."""
+    url = os.getenv('DATABASE_URL', '').strip()
+    if not url:
+        raise RuntimeError('DATABASE_URL is not configured; permanent notifications are unavailable.')
+    import psycopg
+    with psycopg.connect(url, connect_timeout=10) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS clinic_notifications (
+                    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                    legacy_id BIGINT UNIQUE,
+                    user_email TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    notification_type TEXT NOT NULL DEFAULT 'info',
+                    is_read BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text
+                )
+            """)
+            cur.execute("""
+                INSERT INTO clinic_notifications
+                    (legacy_id,user_email,title,message,notification_type,is_read,created_at)
+                SELECT n.id,u.email,n.title,n.message,n.notification_type,
+                       (n.is_read<>0),n.created_at
+                FROM notifications n
+                JOIN users u ON u.id=n.user_id
+                WHERE u.email IS NOT NULL AND u.email<>''
+                ON CONFLICT (legacy_id) DO NOTHING
+            """)
+
+
+def archive_notification_for_user(user_id, title, message, notification_type='info'):
+    """Create a durable notification associated with the account's email address."""
+    url = os.getenv('DATABASE_URL', '').strip()
+    if not url:
+        raise RuntimeError('DATABASE_URL is not configured; permanent notifications are unavailable.')
+    import psycopg
+    with db() as local:
+        user = local.execute('SELECT email FROM users WHERE id=?', (user_id,)).fetchone()
+    if not user or not user['email']:
+        raise RuntimeError('Could not identify the notification recipient email.')
+    ensure_notification_archive()
+    with psycopg.connect(url, connect_timeout=10) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO clinic_notifications (user_email,title,message,notification_type)
+                VALUES (%s,%s,%s,%s)
+            """, (user['email'].strip().lower(),title,message,notification_type))
+
+
+def get_email_notifications(email):
+    ensure_notification_archive()
+    url = os.getenv('DATABASE_URL', '').strip()
+    import psycopg
+    with psycopg.connect(url, connect_timeout=10) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id,title,message,notification_type,is_read,created_at
+                FROM clinic_notifications
+                WHERE lower(user_email)=lower(%s)
+                ORDER BY id DESC LIMIT 100
+            """, (email,))
+            columns = [item.name for item in cur.description]
+            rows = [dict(zip(columns,row)) for row in cur.fetchall()]
+            cur.execute("""
+                SELECT COUNT(*) FROM clinic_notifications
+                WHERE lower(user_email)=lower(%s) AND is_read=FALSE
+            """, (email,))
+            unread = cur.fetchone()[0]
+    return rows, unread
+
+
 @app.get('/api/notifications')
 @login_required
 def get_notifications():
     u=current_user()
-    with db() as c:
-        rows=c.execute("""SELECT id,title,message,notification_type,is_read,created_at
-                          FROM notifications WHERE user_id=?
-                          ORDER BY id DESC LIMIT 50""",(u['id'],)).fetchall()
-        unread=c.execute("SELECT COUNT(*) FROM notifications WHERE user_id=? AND is_read=0",(u['id'],)).fetchone()[0]
-    return jsonify(notifications=[dict(r) for r in rows],unread_count=unread)
+    try:
+        rows,unread=get_email_notifications(u['email'])
+        return jsonify(notifications=rows,unread_count=unread)
+    except Exception:
+        app.logger.exception('Could not load permanent email-based notifications')
+        return jsonify(error='Notifications are temporarily unavailable. Check DATABASE_URL and PostgreSQL.'),503
 
 
 @app.patch('/api/notifications/<int:notification_id>/read')
 @login_required
 def mark_notification_read(notification_id):
     u=current_user()
-    with db() as c:
-        cur=c.execute("UPDATE notifications SET is_read=1 WHERE id=? AND user_id=?",(notification_id,u['id']))
-        if not cur.rowcount:
-            return jsonify(error='Notification not found.'),404
+    try:
+        ensure_notification_archive()
+        import psycopg
+        with psycopg.connect(os.getenv('DATABASE_URL','').strip(),connect_timeout=10) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE clinic_notifications SET is_read=TRUE
+                    WHERE id=%s AND lower(user_email)=lower(%s)
+                """,(notification_id,u['email']))
+                if not cur.rowcount:
+                    return jsonify(error='Notification not found.'),404
+    except Exception:
+        app.logger.exception('Could not update permanent notification status')
+        return jsonify(error='Notification status could not be saved.'),503
     return jsonify(success=True)
 
 
@@ -799,8 +882,18 @@ def mark_notification_read(notification_id):
 @login_required
 def mark_all_notifications_read():
     u=current_user()
-    with db() as c:
-        c.execute("UPDATE notifications SET is_read=1 WHERE user_id=?",(u['id'],))
+    try:
+        ensure_notification_archive()
+        import psycopg
+        with psycopg.connect(os.getenv('DATABASE_URL','').strip(),connect_timeout=10) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE clinic_notifications SET is_read=TRUE
+                    WHERE lower(user_email)=lower(%s)
+                """,(u['email'],))
+    except Exception:
+        app.logger.exception('Could not mark permanent notifications as read')
+        return jsonify(error='Notification status could not be saved.'),503
     return jsonify(success=True)
 
 
@@ -944,10 +1037,16 @@ def reschedule_appointment(appointment_id):
                   (u['id'],'Appointment rescheduled','appointment',appointment_id,
                    f"Rescheduled appointment with {doctor['name']} for patient ID {appt['patient_id']}",
                    f"{appt['appointment_date']} {appt['appointment_time']}",f"{new_day.isoformat()} {new_slot}"))
+        notification_title = 'Appointment rescheduled'
+        notification_message = f"Your appointment with {doctor['name']} has been moved from {appt['appointment_date']} at {appt['appointment_time']} to {new_day.isoformat()} at {new_slot}. Check Appointments for the updated details."
         c.execute("""INSERT INTO notifications(user_id,title,message,notification_type)
                      VALUES(?,?,?,'appointment')""",
-                  (appt['patient_id'],'Appointment rescheduled',
-                   f"Your appointment with {doctor['name']} has been moved from {appt['appointment_date']} at {appt['appointment_time']} to {new_day.isoformat()} at {new_slot}. Check Appointments for the updated details."))
+                  (appt['patient_id'],notification_title,notification_message))
+    try:
+        archive_notification_for_user(appt['patient_id'],notification_title,notification_message,'appointment')
+    except Exception:
+        app.logger.exception('Could not archive appointment notification in PostgreSQL')
+        return jsonify(error='Appointment was rescheduled, but its permanent notification could not be saved.'),503
     sync_persistent_appointments()
     return jsonify(success=True,message='Appointment rescheduled. The patient has been notified and can pay the existing bill under Due payments.')
 
