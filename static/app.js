@@ -138,7 +138,7 @@ refreshButton?.addEventListener('click', async () => {
 (async function initialLoad() {
   const tasks = [loadDoctors(), loadAppointments(), loadMedicines(), loadMedicineOrders(), loadPriceList(), loadChatContext(), loadBills()]; if(['admin','reception'].includes(window.clinic_ROLE)) tasks.push(loadEmergencies());
   
-  if (['patient', 'doctor', 'admin'].includes(window.clinic_ROLE)) tasks.push(loadRecords());
+  if (['patient', 'doctor'].includes(window.clinic_ROLE)) tasks.push(loadRecords());
   try { await Promise.all(tasks); }
   catch (error) { notify(error); }
 })();
