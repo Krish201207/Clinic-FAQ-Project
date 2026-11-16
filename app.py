@@ -312,7 +312,7 @@ def archive_chat_message(user_id, conversation_id, question, answer, classificat
             """, (user_id,user['name'],user['email'],conversation_id,question,answer,classification,topic))
 
 
-def fetch_admin_chat_archive(limit=500):
+def fetch_admin_chat_archive():
     """Return archived conversations for the administrator only."""
     url = os.getenv('DATABASE_URL', '').strip()
     if not url:
@@ -325,8 +325,8 @@ def fetch_admin_chat_archive(limit=500):
                 SELECT archive_id AS id,user_id,user_name,user_email,session_id,
                        question,answer,classification,topic,created_at
                 FROM clinic_chat_archive
-                ORDER BY archive_id DESC LIMIT %s
-            """, (limit,))
+                ORDER BY archive_id DESC
+            """)
             columns = [item.name for item in cur.description]
             return [dict(zip(columns,row)) for row in cur.fetchall()]
 
