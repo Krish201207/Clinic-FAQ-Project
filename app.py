@@ -815,7 +815,7 @@ def sync_bill_archive():
                         amount=EXCLUDED.amount,
                         status=EXCLUDED.status,
                         paid_at=EXCLUDED.paid_at
-                """, tuple(row))
+                """, (row['id'],row['email'],row['name'],row['description'],row['amount'],row['status'],row['created_at'],row['paid_at'] or ''))
             cur.execute("""
                 SELECT source_bill_id AS id,patient_email,patient_name,description,
                        amount,status,created_at,paid_at
