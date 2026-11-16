@@ -3,6 +3,7 @@ from openpyxl import Workbook
 from pathlib import Path
 from functools import wraps
 from datetime import datetime, date, timedelta
+from zoneinfo import ZoneInfo
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from flask import Flask, jsonify, request, render_template, render_template_string, redirect, url_for, session, flash, send_file
@@ -909,12 +910,16 @@ def appointments():
     u=current_user()
     with db() as c:
         # Expire past booked appointments without deleting their history.
+        # Appointment dates and times are entered/displayed in Indian Standard Time.
+        # Do not compare them with the Render server's UTC clock.
+        clinic_now = datetime.now(ZoneInfo('Asia/Kolkata'))
+        clinic_today = clinic_now.date().isoformat()
         c.execute("""UPDATE appointments
                      SET status='Expired'
                      WHERE status='Booked'
                        AND (appointment_date < ? OR
-                            (appointment_date = ? AND appointment_time < ?))""",
-                  (date.today().isoformat(), date.today().isoformat(), datetime.now().strftime('%H:%M')))
+                            (appointment_date = ? AND appointment_time <= ?))""",
+                  (clinic_today, clinic_today, clinic_now.strftime('%H:%M')))
         if u['role'] in ('admin','reception'):
             # Admin/reception see the complete clinic appointment register.
             rows=c.execute('''SELECT a.*,u.name patient_name,d.name doctor_name,d.department FROM appointments a JOIN users u ON u.id=a.patient_id JOIN doctors d ON d.id=a.doctor_id ORDER BY appointment_date DESC,appointment_time DESC LIMIT 1000''').fetchall()
