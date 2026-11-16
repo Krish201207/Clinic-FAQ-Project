@@ -825,6 +825,25 @@ def sync_bill_archive():
             return cur.fetchall()
 
 
+
+@app.after_request
+def persist_billing_changes(response):
+    """Persist bill creation and payment-status changes after their SQLite transaction commits."""
+    if request.method in ('POST',) and (
+        request.path == '/api/appointments'
+        or request.path == '/api/medicine-orders'
+        or request.path == '/ask'
+        or request.path.startswith('/api/bills/')
+        or request.path.startswith('/payment/scan/')
+        or request.path.startswith('/payment/test/')
+    ):
+        try:
+            sync_bill_archive()
+        except Exception:
+            app.logger.exception('Could not persist billing changes to PostgreSQL')
+    return response
+
+
 def ensure_notification_archive():
     """Keep notifications in PostgreSQL under the user's email, not a local SQLite ID."""
     url = os.getenv('DATABASE_URL', '').strip()
@@ -1247,19 +1266,6 @@ def get_bills():
     with db() as c:
         rows=c.execute("SELECT * FROM bills WHERE patient_id=? ORDER BY id DESC",(u['id'],)).fetchall()
     return jsonify(bills=[dict(x) for x in rows])
-
-@app.post('/api/bills')
-@roles('admin','reception')
-def create_bill():
-    d=request.get_json(silent=True) or {}
-    try: pid=int(d.get('patient_id')); amount=round(float(d.get('amount')),2)
-    except Exception:return jsonify(error='Enter valid patient ID and amount.'),400
-    desc=str(d.get('description','')).strip()
-    if amount<=0 or not desc:return jsonify(error='Description and positive amount are required.'),400
-    with db() as c:
-        if not c.execute("SELECT 1 FROM users WHERE id=? AND role='patient'",(pid,)).fetchone():return jsonify(error='Patient not found.'),404
-        cur=c.execute("INSERT INTO bills(patient_id,description,amount) VALUES(?,?,?)",(pid,desc,amount))
-    return jsonify(success=True,bill_id=cur.lastrowid),201
 
 @app.post('/api/bills/<int:bill_id>/test-payment')
 @login_required
