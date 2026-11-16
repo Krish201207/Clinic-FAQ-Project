@@ -89,6 +89,8 @@ async function loadNotifications(){
   const d=await api('/api/notifications');
   const count=$('#notification-count');
   if(count){count.textContent=d.unread_count;count.hidden=!d.unread_count}
+  const dot=$('#profile-notification-dot');
+  if(dot){dot.hidden=Number(d.unread_count||0)===0;dot.title=Number(d.unread_count||0)+' unread notification(s)'}
   box.innerHTML=(d.notifications||[]).map(n=>'<button type="button" class="profile-notification '+(n.is_read?'read':'unread')+'" data-notification-id="'+n.id+'"><b>'+esc(n.title)+'</b><small>'+esc(n.message)+'</small><time>'+esc(n.created_at)+'</time></button>').join('')||'<p class="notification-empty">No notifications yet.</p>';
  }catch(e){box.innerHTML='<p class="notification-empty">Could not load notifications.</p>'}
 }
