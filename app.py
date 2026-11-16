@@ -773,6 +773,58 @@ def clear_chat_history():
 def me():
     u=current_user(); return jsonify(dict(u))
 
+
+def sync_bill_archive():
+    """Mirror every local bill to PostgreSQL and return the permanent clinic-wide billing register."""
+    url = os.getenv('DATABASE_URL', '').strip()
+    if not url:
+        raise RuntimeError('DATABASE_URL is not configured; permanent billing records are unavailable.')
+    import psycopg
+    with db() as local:
+        rows = local.execute("""
+            SELECT b.id,b.description,b.amount,b.status,b.created_at,b.paid_at,
+                   u.email,u.name
+            FROM bills b
+            JOIN users u ON u.id=b.patient_id
+            WHERE u.email IS NOT NULL AND u.email<>''
+        """).fetchall()
+    with psycopg.connect(url, connect_timeout=10) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS clinic_bills (
+                    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                    source_bill_id BIGINT NOT NULL,
+                    patient_email TEXT NOT NULL,
+                    patient_name TEXT NOT NULL DEFAULT '',
+                    description TEXT NOT NULL,
+                    amount DOUBLE PRECISION NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'Unpaid',
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
+                    paid_at TEXT NOT NULL DEFAULT '',
+                    UNIQUE(patient_email, source_bill_id)
+                )
+            """)
+            for row in rows:
+                cur.execute("""
+                    INSERT INTO clinic_bills
+                        (source_bill_id,patient_email,patient_name,description,amount,status,created_at,paid_at)
+                    VALUES (%s,lower(%s),%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT (patient_email,source_bill_id) DO UPDATE SET
+                        patient_name=EXCLUDED.patient_name,
+                        description=EXCLUDED.description,
+                        amount=EXCLUDED.amount,
+                        status=EXCLUDED.status,
+                        paid_at=EXCLUDED.paid_at
+                """, tuple(row))
+            cur.execute("""
+                SELECT source_bill_id AS id,patient_email,patient_name,description,
+                       amount,status,created_at,paid_at
+                FROM clinic_bills
+                ORDER BY created_at DESC,source_bill_id DESC
+            """)
+            return cur.fetchall()
+
+
 def ensure_notification_archive():
     """Keep notifications in PostgreSQL under the user's email, not a local SQLite ID."""
     url = os.getenv('DATABASE_URL', '').strip()
@@ -1185,9 +1237,15 @@ def add_medicine():
 @login_required
 def get_bills():
     u=current_user()
+    if u['role'] in ('admin','reception'):
+        try:
+            rows=sync_bill_archive()
+        except Exception:
+            app.logger.exception('Could not synchronize permanent billing records')
+            return jsonify(error='Clinic-wide billing records are temporarily unavailable. Check DATABASE_URL and PostgreSQL.'),503
+        return jsonify(bills=[dict(x) for x in rows])
     with db() as c:
-        sql="SELECT b.*,u.name patient_name FROM bills b JOIN users u ON u.id=b.patient_id ORDER BY b.id DESC" if u['role'] in ('admin','reception') else "SELECT * FROM bills WHERE patient_id=? ORDER BY id DESC"
-        rows=c.execute(sql,() if u['role'] in ('admin','reception') else (u['id'],)).fetchall()
+        rows=c.execute("SELECT * FROM bills WHERE patient_id=? ORDER BY id DESC",(u['id'],)).fetchall()
     return jsonify(bills=[dict(x) for x in rows])
 
 @app.post('/api/bills')
