@@ -118,3 +118,8 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
 .dark-mode .audit-heading{border-color:#34505b}
 .dark-mode .audit-table th{background:#203b47;color:#e8f0f2}
 .dark-mode .audit-table td{color:#e8f0f2;border-color:#34505b}
+
+/* Red indicator on the profile control when unread notifications exist. */
+.user-chip{position:relative}
+.profile-notification-dot{position:absolute;top:4px;left:32px;width:10px;height:10px;border-radius:50%;background:#dc2626;border:2px solid #fff;box-shadow:0 0 0 1px #dc2626;z-index:2}
+.profile-notification-dot[hidden]{display:none}
