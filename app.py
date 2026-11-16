@@ -780,6 +780,7 @@ def sync_bill_archive():
     if not url:
         raise RuntimeError('DATABASE_URL is not configured; permanent billing records are unavailable.')
     import psycopg
+    from psycopg.rows import dict_row
     with db() as local:
         rows = local.execute("""
             SELECT b.id,b.description,b.amount,b.status,b.created_at,b.paid_at,
@@ -788,7 +789,7 @@ def sync_bill_archive():
             JOIN users u ON u.id=b.patient_id
             WHERE u.email IS NOT NULL AND u.email<>''
         """).fetchall()
-    with psycopg.connect(url, connect_timeout=10) as conn:
+    with psycopg.connect(url, connect_timeout=10, row_factory=dict_row) as conn:
         with conn.cursor() as cur:
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS clinic_bills (
@@ -1262,7 +1263,7 @@ def get_bills():
         except Exception:
             app.logger.exception('Could not synchronize permanent billing records')
             return jsonify(error='Clinic-wide billing records are temporarily unavailable. Check DATABASE_URL and PostgreSQL.'),503
-        return jsonify(bills=[dict(x) for x in rows])
+        return jsonify(bills=rows)
     with db() as c:
         rows=c.execute("SELECT * FROM bills WHERE patient_id=? ORDER BY id DESC",(u['id'],)).fetchall()
     return jsonify(bills=[dict(x) for x in rows])
