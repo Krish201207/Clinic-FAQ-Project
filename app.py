@@ -1422,13 +1422,48 @@ def get_upload(filename):
 @app.get('/api/analytics')
 @roles('admin','reception')
 def analytics():
+    # Admin conversation history is stored in the persistent PostgreSQL archive.
+    # Read analytics from that same source so the dashboard matches the admin history page.
+    if current_user()['role'] == 'admin':
+        url = os.getenv('DATABASE_URL', '').strip()
+        if not url:
+            return jsonify(error='DATABASE_URL is not configured; analytics archive is unavailable.'), 503
+        import psycopg
+        ensure_chat_archive()
+        with psycopg.connect(url, connect_timeout=10) as conn:
+            with conn.cursor() as cur:
+                cur.execute('SELECT COUNT(*) FROM clinic_chat_archive')
+                total = cur.fetchone()[0]
+                cur.execute('''
+                    SELECT classification AS label, COUNT(*) AS count
+                    FROM clinic_chat_archive
+                    GROUP BY classification
+                    ORDER BY count DESC
+                ''')
+                categories = [dict(label=row[0], count=row[1]) for row in cur.fetchall()]
+                cur.execute('''
+                    SELECT topic AS label, COUNT(*) AS count
+                    FROM clinic_chat_archive
+                    GROUP BY topic
+                    ORDER BY count DESC
+                ''')
+                topics = [dict(label=row[0], count=row[1]) for row in cur.fetchall()]
+    else:
+        # Reception users retain the existing local, user-session analytics behavior.
+        with db() as c:
+            total = c.execute('SELECT COUNT(*) FROM chat_history').fetchone()[0]
+            categories = [dict(r) for r in c.execute(
+                'SELECT classification label,COUNT(*) count FROM chat_history GROUP BY classification'
+            )]
+            topics = [dict(r) for r in c.execute(
+                'SELECT topic label,COUNT(*) count FROM chat_history GROUP BY topic ORDER BY count DESC'
+            )]
+
     with db() as c:
-        total=c.execute('SELECT COUNT(*) FROM chat_history').fetchone()[0]
-        categories=[dict(r) for r in c.execute('SELECT classification label,COUNT(*) count FROM chat_history GROUP BY classification')]
-        topics=[dict(r) for r in c.execute('SELECT topic label,COUNT(*) count FROM chat_history GROUP BY topic ORDER BY count DESC')]
-        appts=c.execute('SELECT COUNT(*) FROM appointments').fetchone()[0]
-        patients=c.execute("SELECT COUNT(*) FROM users WHERE role='patient'").fetchone()[0]
-    return jsonify(total_queries=total,categories=categories,topics=topics,appointments=appts,patients=patients)
+        appts = c.execute('SELECT COUNT(*) FROM appointments').fetchone()[0]
+        patients = c.execute("SELECT COUNT(*) FROM users WHERE role='patient'").fetchone()[0]
+    return jsonify(total_queries=total, categories=categories, topics=topics,
+                   appointments=appts, patients=patients)
 
 
 def payment_status_label(status):
