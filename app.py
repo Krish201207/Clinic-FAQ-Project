@@ -1431,21 +1431,49 @@ def analytics():
     return jsonify(total_queries=total,categories=categories,topics=topics,appointments=appts,patients=patients)
 
 
+def payment_status_label(status):
+    """Convert stored billing states into clear report labels."""
+    value = str(status or '').strip()
+    normalized = value.lower()
+    if normalized.startswith('paid'):
+        return 'PAYMENT PROCESSED'
+    if normalized in ('unpaid', 'pending'):
+        return 'PAYMENT PENDING'
+    return value.upper() if value else 'UNKNOWN'
+
+
 @app.get('/api/reports/dues.xlsx')
 @roles('admin','reception')
 def download_dues_excel():
-    workbook=Workbook()
-    sheet=workbook.active
-    sheet.title='Outstanding Dues'
-    sheet.append(['Bill ID','Patient','Description','Amount (INR)','Status','Created At'])
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = 'Bills & Payment Status'
+    sheet.append(['Bill ID', 'Patient', 'Description', 'Amount (INR)', 'Payment Status', 'Created At'])
     with db() as c:
-        rows=c.execute("SELECT b.id,u.name,b.description,b.amount,b.status,b.created_at FROM bills b JOIN users u ON u.id=b.patient_id WHERE b.status='Unpaid' ORDER BY b.created_at DESC,b.id DESC").fetchall()
-    for row in rows: sheet.append([row['id'],row['name'],row['description'],row['amount'],row['status'],row['created_at']])
-    sheet.freeze_panes='A2'
-    sheet.auto_filter.ref=sheet.dimensions
-    for column,width in {'A':12,'B':24,'C':36,'D':18,'E':16,'F':22}.items(): sheet.column_dimensions[column].width=width
-    output=io.BytesIO(); workbook.save(output); output.seek(0)
-    return send_file(output,mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',as_attachment=True,download_name='outstanding_dues.xlsx')
+        rows = c.execute("""
+            SELECT b.id, u.name, b.description, b.amount, b.status, b.created_at
+            FROM bills b
+            LEFT JOIN users u ON u.id = b.patient_id
+            ORDER BY b.created_at DESC, b.id DESC
+        """).fetchall()
+    for row in rows:
+        sheet.append([
+            row['id'], row['name'] or 'Unknown patient', row['description'],
+            row['amount'], payment_status_label(row['status']), row['created_at']
+        ])
+    sheet.freeze_panes = 'A2'
+    sheet.auto_filter.ref = sheet.dimensions
+    for column, width in {'A': 12, 'B': 24, 'C': 36, 'D': 18, 'E': 24, 'F': 22}.items():
+        sheet.column_dimensions[column].width = width
+    output = io.BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    return send_file(
+        output,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name='bills_payment_status.xlsx'
+    )
 
 @app.get('/api/reports/bills-history.xlsx')
 @login_required
@@ -1464,7 +1492,8 @@ def download_bills_history_excel():
                 ORDER BY b.created_at DESC,b.id DESC
             """,(user['id'],)).fetchall()
         for row in rows:
-            sheet.append([row['id'],row['description'],row['amount'],row['status'],row['created_at'],row['paid_at'] or ''])
+            sheet.append([row['id'], row['description'], row['amount'],
+                          payment_status_label(row['status']), row['created_at'], row['paid_at'] or ''])
     else:
         sheet.append(['Bill ID','Patient ID','Patient Name','Description','Amount (INR)','Payment Status','Bill Created At','Paid At'])
         with db() as c:
@@ -1476,8 +1505,9 @@ def download_bills_history_excel():
                 ORDER BY b.created_at DESC,b.id DESC
             """).fetchall()
         for row in rows:
-            sheet.append([row['id'],row['patient_id'],row['patient_name'],row['description'],
-                          row['amount'],row['status'],row['created_at'],row['paid_at'] or ''])
+            sheet.append([row['id'], row['patient_id'], row['patient_name'], row['description'],
+                          row['amount'], payment_status_label(row['status']),
+                          row['created_at'], row['paid_at'] or ''])
     sheet.freeze_panes='A2'
     sheet.auto_filter.ref=sheet.dimensions
     for column,width in {'A':12,'B':24,'C':24,'D':36,'E':18,'F':20,'G':22,'H':22}.items():
