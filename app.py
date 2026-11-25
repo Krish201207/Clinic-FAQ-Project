@@ -970,6 +970,15 @@ def mark_all_notifications_read():
     return jsonify(success=True)
 
 
+@app.get('/api/patients')
+@roles('admin','doctor')
+def patients():
+    # Doctors and administrators need a reliable way to select the patient
+    # when attaching a medical record. Never expose password hashes.
+    with db() as c:
+        rows=c.execute("SELECT id,name,email FROM users WHERE role='patient' ORDER BY name,id").fetchall()
+    return jsonify(patients=[dict(r) for r in rows])
+
 @app.get('/api/doctors')
 @login_required
 def doctors():
