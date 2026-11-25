@@ -1392,13 +1392,12 @@ def create_emergency():
     return jsonify(success=True,case_id=cur.lastrowid),201
 
 @app.get('/api/records')
-@login_required
+@roles('admin','doctor')
 def records():
-    u=current_user()
-    if u['role'] not in ('patient','doctor'): return jsonify(error='You do not have permission to view health records.'),403
+    # Only administrators and doctors can view stored patient reports.
+    # Both roles see the complete records directory.
     with db() as c:
-        if u['role']=='patient': rows=c.execute('SELECT r.*,u.name patient_name FROM health_records r LEFT JOIN users u ON u.id=r.patient_id WHERE r.patient_id=? ORDER BY r.id DESC',(u['id'],)).fetchall()
-        else: rows=c.execute('SELECT r.*,u.name patient_name FROM health_records r LEFT JOIN users u ON u.id=r.patient_id WHERE r.doctor_id=? ORDER BY r.id DESC LIMIT 300',(u['id'],)).fetchall()
+        rows=c.execute('SELECT r.*,u.name patient_name FROM health_records r LEFT JOIN users u ON u.id=r.patient_id ORDER BY r.id DESC LIMIT 1000').fetchall()
     return jsonify(records=[dict(r) for r in rows])
 
 @app.post('/api/records')
@@ -1419,12 +1418,11 @@ def add_record():
     return jsonify(success=True),201
 
 @app.get('/uploads/<path:filename>')
-@login_required
+@roles('admin','doctor')
 def get_upload(filename):
-    # Patients may download only their own records; staff access is role restricted.
-    u=current_user()
+    # Only administrators and doctors may download stored patient reports.
     with db() as c: row=c.execute('SELECT patient_id FROM health_records WHERE file_name=?',(filename,)).fetchone()
-    if not row or u['role']=='reception' or (u['role']=='patient' and row['patient_id']!=u['id']): return 'Not found',404
+    if not row: return 'Not found',404
     from flask import send_from_directory
     return send_from_directory(UPLOAD_DIR,filename,as_attachment=True)
 
